@@ -21,7 +21,7 @@ Simplest way to get started is to:
 1. create two blank files using _File > New File_ named `domain.pddl` and `problem.pddl`, both files will show up in the _Explorer_ pane, open them side by side in the editor,
 1. open the _domain.pddl_ file and type ```domain```. The auto-completion suggests to insert the entire structure of the domain file. Use the <kbd>Tab</kbd> and <kbd>Enter</kbd> keys to skip through the placeholders and make your selections.
 1. open the _problem.pddl_ file and type ```problem```. The auto-completion suggests to insert the entire structure of the problem file. Make sure that the `(domain name)` here matches the name selected in the domain file.
-1. When prompted to configure a _PDDL Parser_, follow the instructions, or select _Later_ to postpone this if you do not have a PDDL parser handy. See [more info](https://github.com/jan-dolejsi/vscode-pddl/wiki/Configuring-the-PDDL-parser).
+1. When prompted to install the VAL (i.e. Validator) tools, follow the instructions. This will bring a PDDL parser and plan validation utilities to your experience.
 1. When you are ready to run the planner on your domain and problem files (both must be open in the editor), invoke the planner via context menu on one of the file text content, or via the <kbd>Alt</kbd> + <kbd>P</kbd> shortcut. The [planning.domains](http://solver.planning.domains/) solver will be used, so do not send any confidential PDDL code.
 1. Configure your own PDDL planner by following [instructions](https://github.com/jan-dolejsi/vscode-pddl/wiki/Configuring-the-PDDL-planner).
 
@@ -35,7 +35,8 @@ To exercise the features of this PDDL Extension, clone this [vscode-pddl-samples
 
 ### Starting from existing PDDL models
 
-Open [editor.planning.domains](http://editor.planning.domains/) in your browser, select _Import_ from the menu and browse the catalog of all the International Planning Competition benchmarks. Or find more examples [here](https://github.com/SoarGroup/Domains-Planning-Domain-Definition-Language/tree/master/pddl).
+Open [editor.planning.domains](http://editor.planning.domains/) in your browser, select _Import_ from the menu and browse the catalog of all the International Planning Competition benchmarks. Or find more examples [here](https://github.com/SoarGroup/Domains-Planning-Domain-Definition-Language/tree/master/pddl).\
+To get back from the online editor to VS Code, save your files into a session and click "Open offline".
 
 ## Features
 
@@ -73,11 +74,15 @@ Use the VS Code keyboard shortcut _Ctrl + Shift + O_ to open up the symbol listi
 
 ![symbol_listing](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_symbol_listing.gif)
 
-### Global predicate/function/type renaming
+### Global predicate/function/type/parameter renaming
 
 Put cursor into a predicate, function or type name and press _F2_ to rename its appearances in the domain file and all associated problem files currently open in the editor.
 
 ![symbol_renaming](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_symbol_renaming.gif)
+
+It is also possible to rename a `?<parameter>` name within a parametrised scope e.g. action/process/effect/derived predicate or function.
+
+![Parameter renaming](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_parameter_type_renaming.gif)
 
 ### Auto-completion
 
@@ -99,22 +104,32 @@ PDDL parser can be configured to run in the background and draw attention to syn
 
 To learn more about how to configure the extension to work with one of the parsers available or even your own, read this [wiki page](https://github.com/jan-dolejsi/vscode-pddl/wiki/Configuring-the-PDDL-parser).
 
+#### Auto-fixing PDDL parser warning
+
+The VAL PDDL parser produces some warnings, that could be automatically fixed with a code action. Code actions are presented in the user interface by a light bulb. For example missing requirements could be automatically inserted:
+
+![Missing requirements and unused predicates/functions warnings](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_missing_requirements_unused_predicates.gif)
+
+Undeclared predicates and functions may also be automatically declared:
+
+![Undeclared predicates/functions code action](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_undeclared_predicate_function.gif)
+
 ### Run the planner and visualize plans
 
 The planner can be invoked in the context of a currently edited PDDL file. There are two ways how to do that via the user interface.
 
-* Type `Ctrl + Shift + P` and type _plan_ to filter the list of available commands. The _PDDL: Run the planner and visualize the plan_ command should be visible.
+* Type `Ctrl + Shift + P` or `F1` and type _plan_ to filter the list of available commands. The _PDDL: Run the planner and visualize the plan_ command should be visible.
 * Right click on the PDDL file and select  _PDDL: Run the planner and visualize the plan_
 * Alternatively you can set up a keyboard shortcut such as `Alt + P` to be associated with the above command (see VS Code documentation for that)
 
 There are multiple scenarios supported:
 
 * if command is invoked on the domain file,
-  - and if single corresponding problem file is open, the planner will run without asking further questions
-  - and if multiple corresponding problem files are open, the list of applicable problem files will appear and the user will select one.
+  * and if single corresponding problem file is open, the planner will run without asking further questions
+  * and if multiple corresponding problem files are open, the list of applicable problem files will appear and the user will select one.
 * if command is invoked on a problem file, the domain file (if open in the editor) will be selected automatically.
 
-Domain and problem files correspond to each other, if:
+Domain, problem and plan/happenings files correspond to each other, if:
 
 * they have the same domain name i.e. `(domain name)` and
 * they are located in the same folder and
@@ -123,6 +138,15 @@ Domain and problem files correspond to each other, if:
 ![planner](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_plan.gif)
 
 Control+click on action names in `.plan` files to jump to the action definition in the domain file.
+
+If one of the rules above is not satisfied, the editor will not naturally associate your files to each other. In that case it shows a validation error suggesting to apply a _Quick Fix_, which lets you find the corresponding domain/problem file from following scopes:
+
+* suggested files, if multiple candidates were found
+* currently open files in the editor
+* other files in the workspace
+* any other file selectable from the computer storage
+
+![domain/problem/plann associations](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_explicit_domain-problem-plan_associations.gif)
 
 #### Running the planner interactively
 
@@ -204,7 +228,10 @@ To add a test case, create a file named `*.ptest.json` anywhere in the workspace
 
 Use other JSON properties like `expectedPlans` to define the test assertion or `options` to specify command-line options to use.
 
-Interesting by-product of this feature is that it can be used to give effective demos. Right click on the _Open PDDL domain and test problem_ and both files open side-by-side in the editor. This lends itself well to switching between different models during a presentation/meeting/review.
+Interesting by-product of this feature is that it can be used to give effective demos. Prepare a specific `<name>.ptest.json` for your planned demo. Right click on each test and select the _Open PDDL domain and test problem_ and both files open side-by-side in the editor. Show the code and run the planner. Then move to the next test case - demo.
+
+All tests under a given directory may be executed by right clicking on the folder and selecting the _run all_ command.
+All tests in the workspace may be executed by clicking the _Run all_ button in the _PDDL TESTS_ pane's toolbar.
 
 ## Problem file generation
 
@@ -310,9 +337,9 @@ The _PDDL: Normalize and evaluate plan_ command exposes in isolation the transfo
 
 A .plan file can be generated using an option in the Plan Visualization menu (&#x2630;), or using a _PDDL: Export plan to a file..._ command.
 
-All .plan files have a context menu option _PDDL: Validate plan_, which requires the `validate` executable path to be configured in the _pddl.validatorPath_ setting. See [VAL](https://github.com/KCL-Planning/VAL) for more details.
+All .plan files have a context menu option _PDDL: Validate plan_, which requires the `Validate` executable path to be configured in the _pddl.validatorPath_ setting. See [VAL](https://github.com/KCL-Planning/VAL) for more details.
 
-Sometimes it is more convenient to create a desired plan by hand and using the `validate` tool to find out what is wrong in the domain model. While manually modifying the .plan file, all parsing and validation problems are displayed in the Problems panel of VS Code as long as a corresponding problem and domain files (located in the same folder) are open in the editor and the `validate` executable location is configured via the _pddl.validatorPath_ setting.
+Sometimes it is more convenient to create a desired plan by hand and using the `Validate` tool to find out what is wrong in the domain model. While manually modifying the .plan file, all parsing and validation problems are displayed in the Problems panel of VS Code as long as a corresponding problem and domain files (located in the same folder) are open in the editor and the `Validate` executable location is configured via the _pddl.validatorPath_ setting.
 
 ![Plan validation](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_plan_validation.gif)
 
@@ -365,18 +392,145 @@ To test robustness of your planning model, you can auto-generate a "plan-resume"
 
 For this to work, the setting `pddl.valStepPath` must be set to the location of the ValStep utility, which is currently not distributed with the extension. There is a known issue with time-initial literals and fluents - they are not re-included into the generated problem files.
 
+## Search Debugging
+
+Search Debugging is the _ultimate_ AI Planning educational tool and a powerful search debugger tool at the same time. It explains how the heuristic function guides the search and at the same time it can be used to understand why the planner has hard time finding the plan for given planning problem and where does the domain model need to be tightened.
+
+Start the Search Debugger using the _PDDL: Start search debugger_ command. Stop it by the _PDDL: Stop search debugger_ or pressing the _cell phone signal_ icon. While the search debugger is active, it listens to the planner messages and visualizes the progress of the plan search in several ways:
+
+1. line plot of state heuristic value and estimate of makespan
+1. search tree
+1. best-state-so-far is visualized in terms of planhead, helpful actions and relaxed plan.
+
+![PDDL Search Visualization](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_search_debugger.gif)
+
+When the search stops, the states may be navigated and explored in three ways:
+
+1. using keyboard up, down, left, right buttons to navigate states in the search tree
+1. using keyboard shift+left and shift+right to navigate all states in order of discovery as layed out on the line plot
+1. by clicking on helpful actions to jump to the child state that expands that action (if actually created)
+
+While the Search Debugger is active, any planning _PDDL: Run the planner and display the plan_ requests are instrumented to send search progress info to the Search Debugger. This is achieved by appending a switch to the command line options. The switch may be configured using the `pddlSearchDebugger.plannerCommandLine` setting.
+
+The search debugger may be enabled/disabled by clicking on the bug-like icon in the status bar.
+For even smoother experience, the execution target setting may be switched to _Search debugger_ too to keep the Search debugger window in the forefront.
+
+The search debugger may be enabled/disabled by clicking on the bug-like icon in the status bar.
+
+If the planner outputs even more detailed log for every state, the log file could be synchronously navigated (scrolled to the same state). Select the log file that corresponds to the search being debugged by pressing the 🗎 icon. The log entry that corresponds to the state is matched using the regular expression pattern configurable by the  `pddlSearchDebugger.stateLogPattern` setting.
+
+Following keyboard shortcuts are available to navigate or manipulate the search tree view:
+
+- Typing a number using <kbd>0</kbd>-<kbd>9</kbd> selects the state with the matching Order ID.
+- Change shape of a state to highlight states of interest using:
+  - <kbd>b</kbd>: box,
+  - <kbd>d</kbd>: diamond,
+  - <kbd>s</kbd>: star,
+  - <kbd>t</kbd>: triangle,
+  - <kbd>h</kbd>: hexagon,
+  - <kbd>q</kbd>: square,
+  - <kbd>e</kbd>: ellipse (default)
+- Toggle auto-fitting of the tree to the viewport using <kbd>f</kbd> to avoid losing focus, while search is progressing
+- Fit the entire tree into the viewport by <kbd>F</kbd>
+
+Dead-end states are visualized with brown color.
+Tree branches(s) leading to goal state(s) are painted in green color.
+
+The Search Debugger may now be configured (see the `pddlSearchDebugger.stateIdPattern` configuration setting) with a pattern to parse the state ID.
+The visualization then respects the IDs assigned by the planner rather than using its own numbering scheme
+(which is used if the received state ID does not respect the pattern).
+
+Both tree nodes and edges now show an informative tooltip when mouse hover-over.
+
+To participate in this visual search debugging the planning engine must implement a HTTP client. An example of what data is expected may be found in the [mock search](https://github.com/jan-dolejsi/vscode-pddl/blob/master/client/src/searchDebugger/MockSearch.ts).
+
 ## Block folding in `:init` section of the problem file
 
 For large problem files, it is convenient to be able to fold blocks of statements between `;;(` and `;;)` comments lines.
 
 ![Init block folding](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_init_block_folding.gif)
 
-## Browsing the Planning.Domains PDDL collection
+## Planning.Domains integration
+
+### Browsing the Planning.Domains PDDL collection
 
 The file explorer side bar includes a tree displaying the [Planning.Domains](http://planning.domains) PDDL collection.
 The domain, problem and plan files are downloaded and displayed as read-only files and the planner may be invoked on them as usual.
 
 ![Planning.Domains PDDL collection browser](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_planning.domains_browsing.gif)
+
+### Planning.Domains sessions
+
+The online [Planning.Domains editor](http://editor.planning.domains) has a concept of a session. _Session Details_ pane shows links to open the session online / offline. The _offline_ links are handled by VS Code, if installed.
+
+There are two ways to get started:
+
+1. Using a command:
+   * _PDDL: Download Planning.domains session_ and pasting the _Session Unique ID_
+1. By navigating to this URL in your favorite web browser:
+   * vscode://jan-dolejsi.pddl/planning.domains/session/_readOnlyHash_ or
+   * vscode://jan-dolejsi.pddl/planning.domains/session/edit/_readWriteHash_.
+
+The session files are downloaded into a selected workspace folder and may be interacted with via the _Source Control_ pane.
+
+![Planning.Domains Editor Session in VS Code](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_sessions_in_VSCode.gif)
+
+Planning.Domains Editor Sessions use plug-ins that save their own configuration.
+The `solver` plugin's configuration (i.e. the URL of the solver service) is now replicated into the workspace folder's settings. This is stored in `.vscode/settings.json` file:
+
+```json
+{
+    "pddlPlanner.executableOrService": "http://localhost:8087/solve"
+}
+```
+
+When local session changes are committed back to the server, the solver URL is *not* included.
+
+Session files may be deleted, renamed as well as added. The _Source Control_ pane shows the diff as usual. To open _Source Control_ select the `View > SCM` menu.
+
+The _Source Control_ pane has icons for:
+
+* uploading changes to Planning.Domains,
+* discarding local changes and
+* checking if a new version of the session is available.
+
+The [...] menu contains more options:
+
+* Session may be duplicated (as a new writable session), which is useful when the session was open as read-only.
+* Session may be open in the default browser,
+* Session may be shared via email, if default email client is installed to handle the `mailto:` protocol, or
+* Session may be used as a template to generate entire classroom of sessions, while emailing every student a link to theri session using the _PDDL: Generate Planning.Domains classroom sessions from this template..._ command.
+
+Using the _duplicate session_ and _share via email_ commands, a teacher can create a session for everyone in the classroom and monitor progress of all students from VS Code.
+
+![Planning.Domains Sessions for classroom](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_classroom_in_VSCode.gif)
+
+The command _PDDL: Generate Planning.Domains classroom sessions from this template..._ automate the duplication of this session into any number of student sessions. A prompt pops up to submit student names and/or email addresses in a semi-colon separated list. If email address is included, the default email client pops up with a prepared message for each student.
+When all sessions are created, a dedicated VS Code workspace is created for the classroom and VS Code automatically opens it.
+
+![Planning.Domains classroom generation](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_classroom.gif)
+
+#### Gamifying PDDL trainings
+
+Include a `.ptest.json` file into the template session, create classroom using the , open the Test Explorer (View > Open View ... > Test > PDDL TESTS) and click the _Run All_ button in the toolbar. This runs the test cases from all the student sessions and displays the pass/fail results.
+First student with passing tests wins ... a diploma :-!
+
+#### Working with multiple-sessions in VS Code
+
+The support for multiple sessions or even the entire classroom of sessions per student is built using the VS Code Workspace Folders facility. Each workspace folder in this case is its own Source Control root. The Source Control panel lets you select the session you want to interact with and the status bar starts from the left with a version indicator pertaining to the selected (or first) workspace folder.
+
+The status bar of VS Code shows the state of the session. If multiple session folders are included in the VS Code workspace, the session of interest may be selected using the top part of the _Source Control_ pane.
+
+![Source control status](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_SCM_status.gif)
+
+This is what the different symbols in the status bar mean:
+
+1. cloud download icon - shows if a new version of the session is available for download
+1. repository icon - helps distinguishing Planning.Domain sessions from other types of source control e.g. Git
+1. pencil icon - is displayed if the session is in read/write mode
+1. time info - how long ago was the currently checked-out version saved to the server (clicking it opens up the list of versions to select)
+1. dot icon - is displayed if the session was modified locally
+1. two circular arrows icon - when clicked, VS Code checks whether a new version of the session(s) is available on the server.
 
 ## Known Issues
 
@@ -398,6 +552,8 @@ See [CHANGELOG](CHANGELOG.md).
 ## Credits
 
 Icons made by [Pixel perfect](https://www.flaticon.com/authors/pixel-perfect) from [www.flaticon.com](https://www.flaticon.com/) is licensed by [CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
+
+Development of this extension was supported by [Schlumberger](https://www.slb.com). Visit [careers.slb.com](https://careers.slb.com/).
 
 **Enjoy!**
 

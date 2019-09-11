@@ -5,16 +5,19 @@
 import * as vscode from 'vscode';
 import { PDDLParserSettings } from './Settings';
 
+import { ensureAbsolutePath, isHttp } from './utils';
+import { VAL_DOWNLOAD_COMMAND } from './validation/valCommand';
+
+export const EXECUTABLE_OR_SERVICE = 'executableOrService';
 export const PDDL_PARSER = 'pddlParser';
-const PARSER_EXECUTABLE_OR_SERVICE = PDDL_PARSER + '.executableOrService';
+export const PARSER_EXECUTABLE_OR_SERVICE = PDDL_PARSER + '.' + EXECUTABLE_OR_SERVICE;
 const PARSER_EXECUTABLE_OPTIONS = PDDL_PARSER + '.executableOptions';
-const PARSER_LEGACY_LOCATION = PDDL_PARSER + '.pddlParserService';
 const PARSER_SERVICE_AUTHENTICATION_REFRESH_TOKEN = PDDL_PARSER + '.serviceAuthenticationRefreshToken';
 const PARSER_SERVICE_AUTHENTICATION_ACCESS_TOKEN = PDDL_PARSER + '.serviceAuthenticationAccessToken';
 const PARSER_SERVICE_AUTHENTICATION_S_TOKEN = PDDL_PARSER + '.serviceAuthenticationSToken';
 
 export const PDDL_PLANNER = 'pddlPlanner';
-const PLANNER_EXECUTABLE_OR_SERVICE = PDDL_PLANNER + '.executableOrService';
+export const PLANNER_EXECUTABLE_OR_SERVICE = PDDL_PLANNER + '.' + EXECUTABLE_OR_SERVICE;
 const PLANNER_EXECUTABLE_OPTIONS = PDDL_PLANNER + '.executableOptions';
 const PLANNER_SERVICE_AUTHENTICATION_REFRESH_TOKEN = PDDL_PLANNER + '.serviceAuthenticationRefreshToken';
 const PLANNER_SERVICE_AUTHENTICATION_ACCESS_TOKEN = PDDL_PLANNER + '.serviceAuthenticationAccessToken';
@@ -24,51 +27,48 @@ export const CONF_PDDL = 'pddl';
 export const VALIDATION_PATH = 'validatorPath';
 export const VAL_STEP_PATH = 'valStepPath';
 export const VALUE_SEQ_PATH = 'valueSeqPath';
-export const PLANNER_VAL_STEP_PATH  = CONF_PDDL + "." + VAL_STEP_PATH;
-export const PLANNER_VALUE_SEQ_PATH  = PDDL_PLANNER + "." + VALUE_SEQ_PATH;
+export const PLANNER_VAL_STEP_PATH = CONF_PDDL + "." + VAL_STEP_PATH;
+export const PLANNER_VALUE_SEQ_PATH = CONF_PDDL + "." + VALUE_SEQ_PATH;
 
 export class PddlConfiguration {
 
-    constructor(public context: vscode.ExtensionContext) {
+    constructor(private context: vscode.ExtensionContext) {
     }
 
     getEpsilonTimeStep(): number {
         return vscode.workspace.getConfiguration().get(PLANNER_EPSILON_TIMESTEP);
     }
 
-    async getParserPath(): Promise<string> {
+    getParserPath(): string {
         // this may be 'undefined'
-        return vscode.workspace.getConfiguration().get(PARSER_EXECUTABLE_OR_SERVICE);
-
+        let configuredPath = vscode.workspace.getConfiguration().get<string>(PARSER_EXECUTABLE_OR_SERVICE);
+        return ensureAbsolutePath(configuredPath, this.context);
     }
 
     NEVER_SETUP_PARSER = 'neverSetupParser';
     setupParserLater = false;
 
     async suggestNewParserConfiguration(showNever: boolean) {
-        if (await this.copyFromLegacyParserConfig()) return;
+        if (this.setupParserLater || this.context.globalState.get(this.NEVER_SETUP_PARSER)) { return; }
 
-        if (this.setupParserLater || this.context.globalState.get(this.NEVER_SETUP_PARSER)) return;
-
-        let moreInfo: vscode.MessageItem = { title: "More info..." };
         let setupParserNow: vscode.MessageItem = { title: "Setup now..." };
+        let downloadVal: vscode.MessageItem = { title: "Download VAL now..." };
         let setupParserNever: vscode.MessageItem = { title: "Never" };
         let setupParserLater: vscode.MessageItem = { title: "Later", isCloseAffordance: true };
-        let options: vscode.MessageItem[] = [moreInfo, setupParserNow, setupParserLater];
-        if (showNever) options.splice(2, 0, setupParserNever);
+        let options: vscode.MessageItem[] = [setupParserNow, downloadVal, setupParserLater];
+        if (showNever) { options.splice(options.length, 0, setupParserNever); }
         let choice = await vscode.window.showInformationMessage(
-            "Setup a PDDL parser in order to enable detailed syntactic analysis.",
+            'Setup a [PDDL parser](https://github.com/jan-dolejsi/vscode-pddl/wiki/Configuring-the-PDDL-parser "Read more about PDDL parsers") or download [VAL Tools](https://github.com/KCL-Planning/VAL) in order to enable detailed syntactic analysis.',
             ...options);
 
         switch (choice) {
-            case moreInfo:
-                vscode.commands.executeCommand('vscode.open', vscode.Uri.parse('https://github.com/jan-dolejsi/vscode-pddl/wiki/Configuring-the-PDDL-parser'));
-                this.suggestNewParserConfiguration(showNever);
-                break;
-
             case setupParserNow:
                 this.askNewParserPath();
                 // if the above method call updates the configuration, the parser will be notified
+                break;
+
+            case downloadVal:
+                vscode.commands.executeCommand(VAL_DOWNLOAD_COMMAND);
                 break;
 
             case setupParserLater:
@@ -77,30 +77,15 @@ export class PddlConfiguration {
 
             case setupParserNever:
                 this.context.globalState.update(this.NEVER_SETUP_PARSER, true);
+                break;
 
             default:
                 break;
         }
     }
 
-    async copyFromLegacyParserConfig(): Promise<string> {
-        let configuration = vscode.workspace.getConfiguration();
-
-        // first try to salvage configuration from a deprecated configuration field
-        let legacyParserUrl: string = configuration.get(PARSER_LEGACY_LOCATION);
-
-        if (legacyParserUrl) {
-
-            await this.moveConfiguration(configuration, PARSER_LEGACY_LOCATION, PARSER_EXECUTABLE_OR_SERVICE);
-            return legacyParserUrl;
-        }
-        else {
-            return null;
-        }
-    }
-
     async askNewParserPath() {
-        let existingValue: string = vscode.workspace.getConfiguration().get(PARSER_EXECUTABLE_OR_SERVICE);
+        let existingValue = vscode.workspace.getConfiguration().get<string>(PARSER_EXECUTABLE_OR_SERVICE);
 
         let newParserPath = await vscode.window.showInputBox({
             prompt: "Enter PDDL parser/validator path local command or web service URL",
@@ -116,11 +101,11 @@ export class PddlConfiguration {
 
             let newParserScope = await this.askConfigurationScope();
 
-            if (!newParserScope) return null;
+            if (!newParserScope) { return null; }
 
             let configurationToUpdate = this.getConfigurationForScope(newParserScope);
 
-            if (!PddlConfiguration.isHttp(newParserPath)) {
+            if (!isHttp(newParserPath)) {
                 this.askParserOptions(newParserScope);
             }
 
@@ -175,7 +160,7 @@ export class PddlConfiguration {
             refreshToken: configuration.get<string>(PARSER_SERVICE_AUTHENTICATION_REFRESH_TOKEN),
             accessToken: configuration.get<string>(PARSER_SERVICE_AUTHENTICATION_ACCESS_TOKEN),
             sToken: configuration.get<string>(PARSER_SERVICE_AUTHENTICATION_S_TOKEN),
-        }
+        };
     }
 
     async savePddlParserAuthenticationTokens(configuration: vscode.WorkspaceConfiguration, refreshtoken: string, accesstoken: string, stoken: string, target: vscode.ConfigurationTarget) {
@@ -206,7 +191,7 @@ export class PddlConfiguration {
             refreshToken: configuration.get<string>(PLANNER_SERVICE_AUTHENTICATION_REFRESH_TOKEN),
             accessToken: configuration.get<string>(PLANNER_SERVICE_AUTHENTICATION_ACCESS_TOKEN),
             sToken: configuration.get<string>(PLANNER_SERVICE_AUTHENTICATION_S_TOKEN),
-        }
+        };
     }
 
     async savePddlPlannerAuthenticationTokens(configuration: vscode.WorkspaceConfiguration, refreshtoken: string, accesstoken: string, stoken: string, target: vscode.ConfigurationTarget) {
@@ -215,12 +200,8 @@ export class PddlConfiguration {
         configuration.update(PLANNER_SERVICE_AUTHENTICATION_S_TOKEN, stoken, target);
     }
 
-    static isHttp(path: string) {
-        return path.match(/^http[s]?:/i);
-    }
-
-    async getPlannerPath(): Promise<string> {
-        let plannerPath: string = vscode.workspace.getConfiguration().get(PLANNER_EXECUTABLE_OR_SERVICE);
+    async getPlannerPath(workingFolder?: vscode.Uri): Promise<string> {
+        let plannerPath: string = vscode.workspace.getConfiguration(PDDL_PLANNER, workingFolder).get(EXECUTABLE_OR_SERVICE);
 
         if (!plannerPath) {
             plannerPath = await this.askNewPlannerPath();
@@ -230,7 +211,7 @@ export class PddlConfiguration {
     }
 
     async askNewPlannerPath() {
-        let existingValue: string = vscode.workspace.getConfiguration().get(PLANNER_EXECUTABLE_OR_SERVICE);
+        let existingValue: string = vscode.workspace.getConfiguration(PDDL_PLANNER, null).get(EXECUTABLE_OR_SERVICE);
 
         let newPlannerPath = await vscode.window.showInputBox({
             prompt: "Enter PDDL planner path local command or web service URL",
@@ -247,10 +228,10 @@ export class PddlConfiguration {
 
             let newPlannerScope = await this.askConfigurationScope();
 
-            if (!newPlannerScope) return null;
+            if (!newPlannerScope) { return null; }
             let configurationToUpdate = this.getConfigurationForScope(newPlannerScope);
 
-            if (!PddlConfiguration.isHttp(newPlannerPath)) {
+            if (!isHttp(newPlannerPath)) {
                 this.askPlannerSyntax(newPlannerScope);
             }
 
@@ -283,52 +264,28 @@ export class PddlConfiguration {
         return newPlannerOptions;
     }
 
-    NO_OPTIONS: OptionsQuickPickItem = { label: 'No options.', options: '', description: '' };
-    optionsHistory: OptionsQuickPickItem[] = [ this.NO_OPTIONS, { label: 'Specify options...', newValue: true, options: '', description: '' }];
-
-    async getPlannerOptions() {
-        let optionsSelected = await vscode.window.showQuickPick(this.optionsHistory,
-            { placeHolder: 'Optionally specify planner switches or press ENTER to use default planner configuration.' });
-
-        if (!optionsSelected) return null; // operation canceled by the user by pressing Escape
-        else if (optionsSelected.newValue) {
-            let optionsEntered = await vscode.window.showInputBox({ placeHolder: 'Specify planner options.' });
-            if (!optionsEntered) return null;
-            optionsSelected = { label: optionsEntered, options: optionsEntered, description: '' };
-        }
-        else if (optionsSelected !== this.NO_OPTIONS) {
-            // a previous option was selected - lets allow the user to edit it before continuing
-            let optionsEntered = await vscode.window.showInputBox({value: optionsSelected.options, placeHolder: 'Specify planner options.', prompt: 'Adjust the options, if needed and press Enter to continue.'});
-            if (!optionsEntered) return null; // canceled by the user
-            optionsSelected = { label: optionsEntered, options: optionsEntered, description: '' };
-        }
-
-        let indexOf = this.optionsHistory.findIndex(option => option.options == optionsSelected.options);
-        if (indexOf > -1) {
-            this.optionsHistory.splice(indexOf, 1);
-        }
-        this.optionsHistory.unshift(optionsSelected); // insert to the first position
-        return optionsSelected.options;
-    }
-
     getPlannerSyntax(): string {
-        return vscode.workspace.getConfiguration().get(PLANNER_EXECUTABLE_OPTIONS);
+        return vscode.workspace.getConfiguration().get<string>(PLANNER_EXECUTABLE_OPTIONS);
     }
 
     getValueSeqPath(): string {
-        return vscode.workspace.getConfiguration().get(PLANNER_VALUE_SEQ_PATH);
+        let configuredPath = vscode.workspace.getConfiguration().get<string>(PLANNER_VALUE_SEQ_PATH);
+        return ensureAbsolutePath(configuredPath, this.context);
     }
 
     getValidatorPath(): string {
-        return vscode.workspace.getConfiguration(CONF_PDDL).get(VALIDATION_PATH);
+        let configuredPath = vscode.workspace.getConfiguration(CONF_PDDL).get<string>(VALIDATION_PATH);
+        return ensureAbsolutePath(configuredPath, this.context);
     }
 
-    askNewValidatorPath(): Promise<string> {
-        return this.askAndUpdatePath(VALIDATION_PATH, "Validate tool");
+    async askNewValidatorPath(): Promise<string> {
+        let configuredPath = await this.askAndUpdatePath(VALIDATION_PATH, "Validate tool");
+        return ensureAbsolutePath(configuredPath, this.context);
     }
 
-    getValStepPath(): Promise<string> {
-        return this.getOrAskPath(VAL_STEP_PATH, "ValStep executable");
+    async getValStepPath(): Promise<string> {
+        let configuredPath = await this.getOrAskPath(VAL_STEP_PATH, "ValStep executable");
+        return ensureAbsolutePath(configuredPath, this.context);
     }
 
     async getOrAskPath(configName: string, configFriendlyName: string): Promise<string> {
@@ -370,7 +327,7 @@ export class PddlConfiguration {
         if (seletedUris) {
             configValue = seletedUris[0].fsPath;
             let scopeToUpdate = await this.askConfigurationScope();
-            if (!scopeToUpdate) return null;
+            if (!scopeToUpdate) { return null; }
             let configurationSection = vscode.workspace.getConfiguration(CONF_PDDL);
             configurationSection.update(configName, configValue, scopeToUpdate.target);
         }
@@ -391,7 +348,7 @@ export class PddlConfiguration {
         // todo: need to support folders?
         //{ label: 'Just one workspace folder', description: 'Selected tool will be used just for one workspace folder...', target: vscode.ConfigurationTarget.WorkspaceFolder }
 
-        let selectedScope = availableScopes.length == 1 ? availableScopes[0] : await vscode.window.showQuickPick(availableScopes,
+        let selectedScope = availableScopes.length === 1 ? availableScopes[0] : await vscode.window.showQuickPick(availableScopes,
             { placeHolder: 'Select the target scope for which this setting should be applied' });
 
         return selectedScope;
@@ -402,10 +359,13 @@ export class PddlConfiguration {
 
         let target: vscode.ConfigurationTarget;
 
-        if (legacyConfig.workspaceFolderValue) target = vscode.ConfigurationTarget.WorkspaceFolder;
-        else if (legacyConfig.workspaceValue) target = vscode.ConfigurationTarget.Workspace;
-        else if (legacyConfig.globalValue) target = vscode.ConfigurationTarget.Global;
-        else if (legacyConfig.defaultValue) {
+        if (legacyConfig.workspaceFolderValue) {
+            target = vscode.ConfigurationTarget.WorkspaceFolder;
+        } else if (legacyConfig.workspaceValue) {
+            target = vscode.ConfigurationTarget.Workspace;
+        } else if (legacyConfig.globalValue) {
+            target = vscode.ConfigurationTarget.Global;
+        } else if (legacyConfig.defaultValue) {
             await configuration.update(configName, legacyConfig.defaultValue, vscode.ConfigurationTarget.Global);
         }
         if (target) {
@@ -416,7 +376,7 @@ export class PddlConfiguration {
 
     getConfigurationForScope(scope: ScopeQuickPickItem): vscode.WorkspaceConfiguration {
 
-        if (scope.target == vscode.ConfigurationTarget.WorkspaceFolder) {
+        if (scope.target === vscode.ConfigurationTarget.WorkspaceFolder) {
             // let workspaceFolder = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Pick Workspace Folder to which this setting should be applied' })
             // if (workspaceFolder) {
 
@@ -443,11 +403,4 @@ class ScopeQuickPickItem implements vscode.QuickPickItem {
     description: string;
     target: vscode.ConfigurationTarget;
     uri?: vscode.Uri;
-}
-
-class OptionsQuickPickItem implements vscode.QuickPickItem {
-    label: string;
-    description: string;
-    options: string;
-    newValue?: boolean;
 }

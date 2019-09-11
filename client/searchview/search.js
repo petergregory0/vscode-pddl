@@ -15,19 +15,25 @@ window.addEventListener('message', event => {
     console.log("Message: " + message);
     switch (message.command) {
         case 'stateAdded':
-            add(message.state);
+            add(message.state, false);
             break;
         case 'stateUpdated':
-            update(message.state);
+            update(message.state, false);
             break;
         case 'debuggerState':
-            showDebuggerOn(message.state == 'on');
+            showDebuggerOn(message.state.running == 'on', message.state.port);
             break;
-        case 'showPlan':
+        case 'showStatePlan':
             showStatePlan(message.state);
             break;
         case 'clear':
             clearStates();
+            break;
+        case 'showAllStates':
+            showAllStates(message.state);
+            break;
+        case 'showPlan':
+            showPlan(message.state);
             break;
         case 'stateLog':
             showStateLogButton(message.state);
@@ -43,18 +49,18 @@ function createMockState(id, parentId, actionName, earliestTime) {
         origId: id.toString(),
         parentId: parentId,
         actionName: actionName,
-        h: null,
+        h: undefined,
         earliestTime: earliestTime,
-        totalMakespan: null
+        totalMakespan: undefined
     }
 }
 
 var mockStates = [
-    createMockState(0, null, null, 0),
-    createMockState(1, 0, 'drive start', .1),
-    createMockState(2, 0, 'load start', .1),
-    createMockState(3, 1, 'drive end', 2),
-    createMockState(4, 3, 'unload start', 2.1),
+    createMockState(10, null, null, 0),
+    createMockState(11, 10, 'drive start', .1),
+    createMockState(12, 10, 'load start', .1),
+    createMockState(13, 11, 'drive end', 2),
+    createMockState(14, 13, 'unload start', 2.1),
 ];
 var states = {};
 var selectedStateId = null;
@@ -65,7 +71,7 @@ function addMock() {
     add(newState);
 }
 
-function updateMock() {
+function evaluateMock() {
     if (selectedStateId == null) return;
 
     var state = states[selectedStateId];
@@ -92,9 +98,25 @@ function updateMock() {
     update(state);
 }
 
-function add(newState) {
-    addStateToTree(newState);
-    addStateToChart(newState);
+function deadEndMock() {
+    if (selectedStateId == null) return;
+
+    var state = states[selectedStateId];
+
+    if (!state) {
+        console.log('Selected state does not exist!');
+        return;
+    }
+
+    state.h = Number.POSITIVE_INFINITY;
+    state.totalMakespan = Number.POSITIVE_INFINITY;
+    state.isDeadEnd = true;
+    update(state);
+}
+
+function add(newState, batch) {
+    addStateToTree(newState, batch);
+    addStateToChart(newState, batch);
     states[newState.id]=newState;
 }
 
@@ -105,6 +127,23 @@ function update(state) {
     if (selectedStateId == state.id) {
         selectChartRow(state.id);
     }
+}
+
+function showPlan(states) {
+    showPlanOnTree(states);
+}
+
+function showAllStates(states) {
+    clearStates();
+    for (const state of states) {
+        add(state, true);
+    }
+    endBatch();
+}
+
+function endBatch() {
+    endChartBatch()
+    endTreeBatch();
 }
 
 function onStateSelected(stateId) {
@@ -137,28 +176,45 @@ function initialize() {
         }
     });
 
-    initializeChart();
-    google.visualization.events.addListener(chart, 'select', function() {
-        var selection = chart.getSelection();
-        if (selection && selection.length > 0) {
-            onStateSelected(selection[0].row);
-        }
-        else {
-            onStateSelected(null);
-        }
-    });
-
     window.document.addEventListener('keydown', function(event) {
         navigate(event);
     })
 
     window.onresize = function() {
+        unsubscribeChartEvents();
         reSizeChart();
+        subscribeToChartEvents();
     }
 
     if (!vscode) {
         showDebuggerOn(false);
     }
+
+    initializeChart();
+    subscribeToChartEvents();
+}
+
+var chartSelectEvent;
+
+function subscribeToChartEvents() {
+    console.log("subscribing to chart select event for ");console.log(chart);
+    chartSelectEvent = google.visualization.events.addListener(chart, 'select', function() {
+        console.log("chart selection changed");
+        var selection = chart.getSelection();
+        console.log(selection);
+        if (selection && selection.length > 0) {
+            var newSelectedStateId = rowIdToStateId.get(selection[0].row);
+            onStateSelected(newSelectedStateId);
+        }
+        else {
+            onStateSelected(null);
+        }
+    });
+}
+
+function unsubscribeChartEvents() {
+    if (chartSelectEvent && chart)
+        google.visualization.events.removeListener(chartSelectEvent);
 }
 
 function clearStates() {
@@ -178,55 +234,98 @@ function stopSearchDebugger() {
 }
 
 function restartSearchDebugger() {
-    postMessage({command: 'stopDebugger'});
+    postMessage({command: 'reset'});
     showStatePlan("");
     clearStates();
-    postMessage({command: 'startDebugger'});
 }
 
-function showDebuggerOn(on) {
+function showDebuggerOn(on, port) {
     stopDisplay = on ? 'inherit' : 'none';
     startDisplay = on ? 'none' : 'inherit';
 
     window.document.getElementById("startDebuggerButton").style.display = startDisplay;
     window.document.getElementById("stopDebuggerButton").style.display = stopDisplay;
     window.document.getElementById("restartDebuggerButton").style.display = stopDisplay;
+
+    window.document.getElementById("stopDebuggerButton").title="Search engine listener is running on port "+port+". Click here to stop it."
 }
 
 function showStatePlan(statePlanHtml) {
     window.document.getElementById("statePlan").innerHTML = statePlanHtml;
 }
 
+var shapeMap = new Map();
+shapeMap['h'] = 'hexagon';
+shapeMap['b'] = 'box';
+shapeMap['d'] = 'diamond';
+shapeMap['s'] = 'star';
+shapeMap['t'] = 'triangle';
+shapeMap['h'] = 'hexagon';
+shapeMap['q'] = 'square';
+shapeMap['e'] = 'ellipse';
+
 function navigate(e) {
     e = e || window.event;
-    switch (event.key) {
+    switch (e.key) {
         case "ArrowLeft":
-            if (event.shiftKey) {
-                var newSelectedStateId = navigateChart(-1);
-                onStateSelected(newSelectedStateId);
-            } else {
-                var newSelectedStateId = navigateTreeSiblings(-1);
-                onStateSelected(newSelectedStateId);
-            }
-            break;
+            var newSelectedStateId = e.shiftKey ? navigateChart(-1) : navigateTreeSiblings(-1);
+            onStateSelected(newSelectedStateId);
+            if (newSelectedStateId !== null) e.cancelBubble = true;
+        break;
         case "ArrowRight":
-            if (event.shiftKey) {
-                var newSelectedStateId = navigateChart(+1);
-                onStateSelected(newSelectedStateId);
-            } else {
-                var newSelectedStateId = navigateTreeSiblings(+1);
-                onStateSelected(newSelectedStateId);
-            }
-            break;
+            var newSelectedStateId = e.shiftKey ? navigateChart(+1) : navigateTreeSiblings(+1);
+            onStateSelected(newSelectedStateId);
+            if (newSelectedStateId !== null) e.cancelBubble = true;
+        break;
         case "ArrowUp":
             var newSelectedStateId = navigateTreeUp();
             onStateSelected(newSelectedStateId);
+            if (newSelectedStateId !== null) e.cancelBubble = true;
             break;
         case "ArrowDown":
             var newSelectedStateId = navigateTreeDown();
             onStateSelected(newSelectedStateId);
+            if (newSelectedStateId !== null) e.cancelBubble = true;
+            break;
+        case "f":
+            autoFitEnabled = !autoFitEnabled;
+            break;
+        case "F":
+            fitTree();
             break;
     }
+
+    if (e.key in shapeMap) {
+        changeSelectedNodeShape(shapeMap[e.key]);
+    }
+
+    if (Number.isFinite(parseInt(e.key))) {
+        // digits are being typed
+        var digit = parseInt(e.key);
+        findingStateWithDigit(digit);
+    }
+}
+
+var stateIdToFind = 0;
+var stateFindingTimeout;
+
+/**
+ * Turns on state finding and appends a stateId digit.
+ * @param {number} digit of the state number to append
+ */
+function findingStateWithDigit(digit) {
+    stateIdToFind = stateIdToFind * 10 + digit;
+    if (stateFindingTimeout) clearTimeout(stateFindingTimeout);
+    stateFindingTimeout = setTimeout(() => findState(), 1000);
+}
+
+function findState() {
+    try {
+        onStateSelected(stateIdToFind);
+    } catch(ex) {
+        console.log("Cannot find find state with id " +stateIdToFind + ". Error: " + ex);
+    }
+    stateIdToFind = 0;
 }
 
 function navigateToChildOfSelectedState(actionName) {

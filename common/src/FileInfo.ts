@@ -4,19 +4,26 @@
 * ------------------------------------------------------------------------------------------ */
 'use strict';
 
+import { PddlRange, DocumentPositionResolver } from "./DocumentPositionResolver";
+import { PddlSyntaxNode } from "./PddlSyntaxNode";
+
 /**
  * An abstract PDDL file.
  */
-
 export abstract class FileInfo {
     private text: string;
     private status: FileStatus = FileStatus.Parsed;
     private parsingProblems: ParsingProblem[] = [];
+    private requirements: string[];
 
-    constructor(public fileUri: string, public version: number, public name: string) {
+    constructor(public readonly fileUri: string, private version: number, public readonly name: string, private readonly positionResolver: DocumentPositionResolver) {
     }
 
     abstract getLanguage(): PddlLanguage;
+
+    getVersion(): number {
+        return this.version;
+    }
 
     getText(): string {
         return this.text;
@@ -42,8 +49,8 @@ export abstract class FileInfo {
         return false;
     }
 
-    update(version: number, text: string): boolean {
-        let isNewerVersion = version > this.version;
+    update(version: number, text: string, force: boolean = false): boolean {
+        let isNewerVersion = version > this.version || force;
         if (isNewerVersion) {
             this.setStatus(FileStatus.Dirty);
             this.version = version;
@@ -80,15 +87,8 @@ export abstract class FileInfo {
         return this.parsingProblems;
     }
 
-    getVariableReferences(variable: Variable): PddlRange[] {
-        let referenceLocations: PddlRange[] = [];
-
-        this.findVariableReferences(variable, (location) => {
-            referenceLocations.push(location);
-            return true; // continue searching
-        });
-
-        return referenceLocations;
+    getVariableReferences(_variable: Variable): PddlRange[] {
+        return [];
     }
 
     getTypeReferences(typeName: string): PddlRange[] {
@@ -112,24 +112,20 @@ export abstract class FileInfo {
         return referenceLocations;
     }
 
-    protected findVariableReferences(variable: Variable, callback: (location: PddlRange, line: string) => boolean): void {
-        let lines = this.text.split('\n');
-        let pattern = "\\(\\s*" + variable.name + "( [^\\)]*)?\\)";
-        let regexp = new RegExp(pattern, "gi");
-        for (var lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-            let line = lines[lineIdx];
-            regexp.lastIndex = 0;
-            let commentStartColumn = line.indexOf(';');
-            let match = regexp.exec(line);
-            if (match) {
-                if (commentStartColumn > -1 && match.index > commentStartColumn) continue;
+    protected getRange(node: PddlSyntaxNode): PddlRange {
+        return this.positionResolver.resolveToRange(node.getStart(), node.getEnd());
+    }
 
-                let range = new PddlRange(lineIdx, match.index, lineIdx, match.index + match[0].length);
-                let shouldContinue = callback.apply(this, [range, line]);
+    setRequirements(requirements: string[]) {
+        this.requirements = requirements;
+    }
 
-                if (!shouldContinue) return;
-            }
-        }
+    getRequirements(): string[] {
+        return this.requirements;
+    }
+
+    getDocumentPositionResolver(): DocumentPositionResolver {
+        return this.positionResolver;
     }
 }
 
@@ -144,15 +140,6 @@ export class ParsingProblem {
      * @param columnIndex zero-based column index, where this problem was found. Default is zero.
      */
     constructor(public problem: string, public lineIndex: number, public columnIndex: number = 0) { }
-}
-
-/**
- * This is a local version of the vscode Range class, but because the parser is used in both the extension (client)
- * and the language server, where the Range class is defined separately, we need a single proprietary implementation,
- * which is converted to the VS Code class specific to the two distinct client/server environment. 
- */
-export class PddlRange {
-    constructor(public startLine: number, public startCharacter: number, public endLine: number, public endCharacter: number) { }
 }
 
 export enum PddlLanguage {
@@ -173,23 +160,23 @@ export enum FileStatus { Parsed, Dirty, Validating, Validated }
  * State variable.
  */
 export class Variable {
-    name: string;
-    declaredNameWithoutTypes: string;
-    location: PddlRange = null; // initialized lazily
-    private documentation = ''; // initialized lazily
+    readonly name: string;
+    readonly declaredNameWithoutTypes: string;
+    private location: PddlRange = null; // initialized lazily
+    private documentation: string[] = []; // initialized lazily
     private unit = ''; // initialized lazily
 
-    constructor(public declaredName: string, public parameters: Term[] = []) {
+    constructor(public readonly declaredName: string, public readonly parameters: Term[] = []) {
         this.declaredNameWithoutTypes = declaredName.replace(/\s+-\s+[\w-_]+/gi, '');
         this.name = declaredName.replace(/( .*)$/gi, '');
     }
 
     bind(objects: ObjectInstance[]): Variable {
-        if (this.parameters.length != objects.length) {
+        if (this.parameters.length !== objects.length) {
             throw new Error(`Invalid objects ${objects} for function ${this.getFullName()} parameters ${this.parameters}.`);
         }
         let fullName = this.name;
-        if (objects) fullName += " " + objects.map(o => o.name).join(" ");
+        if (objects) { fullName += " " + objects.map(o => o.name).join(" "); }
         return new Variable(fullName, objects);
     }
 
@@ -197,39 +184,37 @@ export class Variable {
         return this.name + this.parameters.map(par => " " + par.toPddlString()).join('');
     }
 
+    matchesShortNameCaseInsensitive(symbolName: string): boolean {
+        return this.name.toLowerCase() === symbolName.toLowerCase();
+    }
+
     isGrounded(): boolean {
         return this.parameters.every(parameter => parameter.isGrounded());
     }
 
-    setDocumentation(documentation: string): void {
+    setDocumentation(documentation: string[]): void {
         this.documentation = documentation;
-        let match = documentation.match(/\[([^\]]*)\]/);
+        let match = documentation.join('\n').match(/\[([^\]]*)\]/);
         if (match) {
             this.unit = match[1];
         }
     }
 
-    getDocumentation(): string {
+    getDocumentation(): string[] {
         return this.documentation;
     }
 
     getUnit(): string {
         return this.unit;
     }
-}
 
-export function stripComments(pddlText: string): string {
-    let lines = pddlText.split(/\r?\n/g);
-
-    for (var i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        let index = line.indexOf(';');
-        if (index > -1) {
-            lines[i] = line.substring(0, index);
-        }
+    setLocation(range: PddlRange): void {
+        this.location = range;
     }
 
-    return lines.join("\n");
+    getLocation(): PddlRange {
+        return this.location;
+    }
 }
 
 
@@ -263,4 +248,18 @@ export class ObjectInstance extends Term {
     }
 
     isGrounded() { return true; }
+}
+
+export function stripComments(pddlText: string): string {
+    let lines = pddlText.split(/\r?\n/g);
+
+    for (var i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        let index = line.indexOf(';');
+        if (index > -1) {
+            lines[i] = line.substring(0, index);
+        }
+    }
+
+    return lines.join("\n");
 }

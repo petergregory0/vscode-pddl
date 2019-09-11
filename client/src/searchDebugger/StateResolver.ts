@@ -14,5 +14,9 @@ export interface StateResolver {
 
     onBetterState: Event<State>;
 
+    onPlanFound: Event<State[]>;
+
     getState(stateId: number): State;
+
+    getStates(): State[];
 }

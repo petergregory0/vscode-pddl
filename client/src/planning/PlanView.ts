@@ -9,14 +9,13 @@ import {
     ViewColumn, ExtensionContext, TextDocument, WebviewPanel, Disposable, TextDocumentChangeEvent
 } from 'vscode';
 
-import { isPlan, getDomainAndProblemForPlan } from '../utils';
+import { isPlan, getDomainAndProblemForPlan } from '../workspace/workspaceUtils';
 import { PlanReportGenerator } from './PlanReportGenerator';
-import { PddlWorkspace } from '../../../common/src/workspace-model';
-import { PddlLanguage } from '../../../common/src/FileInfo';
 import { PlanInfo, PLAN } from '../../../common/src/parser';
 import { Plan } from '../../../common/src/Plan';
 
 import * as path from 'path';
+import { CodePddlWorkspace } from '../workspace/CodePddlWorkspace';
 
 const CONTENT = 'planview';
 export const PDDL_GENERATE_PLAN_REPORT = 'pddl.planReport';
@@ -29,7 +28,7 @@ export class PlanView extends Disposable {
     displayWidth = 200;
     public static readonly PLANNER_OUTPUT_URI = Uri.parse("pddl://planner/output");
 
-    constructor(private context: ExtensionContext, private pddlWorkspace: PddlWorkspace) {
+    constructor(private context: ExtensionContext, private codePddlWorkspace: CodePddlWorkspace) {
         super(() => this.dispose());
 
         context.subscriptions.push(commands.registerCommand("pddl.plan.preview", async planUri => {
@@ -51,15 +50,15 @@ export class PlanView extends Disposable {
             if (doc.languageId === PLAN) {
                 this.setNeedsRebuild(doc);
             }
-        }))
+        }));
 
     }
 
-    setPlannerOutput(plans: Plan[]): void {
+    setPlannerOutput(plans: Plan[], reveal: boolean): void {
         let plannerOutputPanel = this.getPlannerOutputPanel();
         plannerOutputPanel.setPlans(plans);
         this.resetTimeout();
-        if (plans.length > 0) plannerOutputPanel.reveal();
+        if (plans.length > 0 && reveal) { plannerOutputPanel.reveal(); }
     }
 
     getPlannerOutputPanel(): PlanPreviewPanel {
@@ -72,12 +71,12 @@ export class PlanView extends Disposable {
         return plannerOutputPanel;
     }
 
-    setNeedsRebuild(planDocument: TextDocument): void {
+    async setNeedsRebuild(planDocument: TextDocument): Promise<void> {
         let panel = this.webviewPanels.get(planDocument.uri);
 
         if (panel) {
             try {
-                let plan = this.parsePlanFile(planDocument);
+                let plan = await this.parsePlanFile(planDocument);
                 panel.setPlans([plan]);
             }
             catch (ex) {
@@ -126,7 +125,7 @@ export class PlanView extends Disposable {
             this.webviewPanels.set(doc.uri, previewPanel);
         }
 
-        this.setNeedsRebuild(doc);
+        await this.setNeedsRebuild(doc);
         this.updateContent(previewPanel);
     }
 
@@ -163,16 +162,16 @@ export class PlanView extends Disposable {
             return previewPanel.getError().message;
         }
         else {
-            return new PlanReportGenerator(this.context, this.displayWidth, false)
+            return new PlanReportGenerator(this.context, { displayWidth: this.displayWidth, selfContained: false })
                 .generateHtml(previewPanel.getPlans());
         }
     }
 
-    parsePlanFile(planDocument: TextDocument): Plan {
+    async parsePlanFile(planDocument: TextDocument): Promise<Plan> {
         try {
-            let planFileInfo = <PlanInfo>this.pddlWorkspace.upsertAndParseFile(planDocument.uri.toString(), PddlLanguage.PLAN, planDocument.version, planDocument.getText());
+            let planFileInfo = <PlanInfo> await this.codePddlWorkspace.upsertAndParseFile(planDocument);
 
-            let domainAndProblem = getDomainAndProblemForPlan(planFileInfo, this.pddlWorkspace);
+            let domainAndProblem = getDomainAndProblemForPlan(planFileInfo, this.codePddlWorkspace.pddlWorkspace);
 
             return new Plan(planFileInfo.getSteps(), domainAndProblem.domain, domainAndProblem.problem);
         }
@@ -204,7 +203,7 @@ async function getDotDocument(dotDocumentUri: Uri | undefined): Promise<TextDocu
     if (dotDocumentUri) {
         return await workspace.openTextDocument(dotDocumentUri);
     } else {
-        if (window.activeTextEditor != null && isPlan(window.activeTextEditor.document)) {
+        if (window.activeTextEditor !== null && isPlan(window.activeTextEditor.document)) {
             return window.activeTextEditor.document;
         }
         else {
@@ -240,8 +239,8 @@ class PlanPreviewPanel {
     }
 
     getSelectedPlan(): Plan {
-        if (this.plans.length > 0) return this.plans[this.selectedPlanIndex];
-        else return undefined;
+        if (this.plans.length > 0) { return this.plans[this.selectedPlanIndex]; }
+        else { return undefined; }
     }
 
     setPlans(plans: Plan[]): void {
@@ -252,7 +251,7 @@ class PlanPreviewPanel {
     }
 
     setError(ex: Error): void {
-        this.error = ex;;
+        this.error = ex;
     }
 
     getError(): Error {

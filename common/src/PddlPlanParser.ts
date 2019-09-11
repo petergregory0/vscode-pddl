@@ -6,23 +6,26 @@
 
 import { Plan } from './Plan';
 import { PlanStep } from './PlanStep';
-import { DomainInfo, ProblemInfo } from './parser';
-
+import { ProblemInfo } from './parser';
+import { DomainInfo } from './DomainInfo';
+ 
 /**
  * Parses plan in the PDDL form incrementally - line/buffer at a time.
  */
 export class PddlPlanParser {
 
-    plans: Plan[] = [];
-    public static planStepPattern = /^\s*((\d+|\d+\.\d+)\s*:)?\s*\((.*)\)\s*(\[\s*(\d+|\d+\.\d+)\s*\])?\s*$/gim;
-    planStatesEvaluatedPattern = /^;\s*States evaluated[\w ]*:[ ]*(\d*)\s*$/i;
-    planCostPattern = /[\w ]*(cost|metric)[\D :]*[ ]*(\d*|\d*\.\d*)\s*$/i
+    private readonly plans: Plan[] = [];
+    public static readonly planStepPattern = /^\s*((\d+|\d+\.\d+)\s*:)?\s*\((.*)\)\s*(\[\s*(\d+|\d+\.\d+)\s*\])?\s*$/gim;
+    private readonly planStatesEvaluatedPattern = /^\s*;?\s*States evaluated[\w ]*:[ ]*(\d*)\s*$/i;
+    private readonly planCostPattern = /[\w ]*(cost|metric)[\D :]*[ ]*(\d*|\d*\.\d*)\s*$/i;
 
-    planBuilder: PlanBuilder;
-    endOfBufferToBeParsedNextTime = '';
+    private planBuilder: PlanBuilder;
+    private endOfBufferToBeParsedNextTime = '';
 
-    constructor(private domain: DomainInfo, private problem: ProblemInfo, private epsilon: number, private onPlanReady?: (plans: Plan[]) => void) {
-        this.planBuilder = new PlanBuilder(epsilon);
+    private xmlPlanBuilder: XmlPlanBuilder;
+
+    constructor(private domain: DomainInfo, private problem: ProblemInfo, public readonly options: PddlPlanParserOptions, private onPlanReady?: (plans: Plan[]) => void) {
+        this.planBuilder = new PlanBuilder(options.epsilon);
     }
 
     /**
@@ -36,7 +39,7 @@ export class PddlPlanParser {
         let nextEndLine: number;
         while ((nextEndLine = textString.indexOf('\n', lastEndLine)) > -1) {
             let nextLine = textString.substring(lastEndLine, nextEndLine + 1);
-            if (nextLine.trim()) this.appendLine(nextLine);
+            if (nextLine.trim()) { this.appendLine(nextLine); }
             lastEndLine = nextEndLine + 1;
         }
         if (textString.length > lastEndLine) {
@@ -49,6 +52,22 @@ export class PddlPlanParser {
      * @param outputLine one line of planner output
      */
     appendLine(outputLine: string): void {
+
+        if (this.xmlPlanBuilder || XmlPlanBuilder.isXmlStart(outputLine)) {
+            (this.xmlPlanBuilder || (this.xmlPlanBuilder = new XmlPlanBuilder())).appendLine(outputLine);
+            if (this.xmlPlanBuilder.isComplete()) {
+                // extract plan
+                this.xmlPlanBuilder.getPlanSteps()
+                    .then(steps => {
+                        steps.forEach(step => this.appendStep(step));
+                        this.xmlPlanBuilder = null;
+                        this.onPlanFinished();
+                    })
+                    .catch(reason => {
+                        console.log(reason);
+                    });
+            }
+        }
 
         let planStep = this.planBuilder.parse(outputLine, undefined);
         if (planStep) {
@@ -81,7 +100,7 @@ export class PddlPlanParser {
      */
     appendStep(planStep: PlanStep) {
         this.planBuilder.add(planStep);
-        if (!this.planBuilder.parsingPlan) this.planBuilder.parsingPlan = true;
+        if (!this.planBuilder.parsingPlan) { this.planBuilder.parsingPlan = true; }
     }
 
     /**
@@ -93,12 +112,13 @@ export class PddlPlanParser {
             this.appendLine(this.endOfBufferToBeParsedNextTime);
             this.endOfBufferToBeParsedNextTime = '';
         }
-        if (this.planBuilder.getSteps().length > 0) {
+        if (this.planBuilder.getSteps().length > 0 ||
+            this.plans.length < this.options.minimumPlansExpected) {
             this.plans.push(this.planBuilder.build(this.domain, this.problem));
-            this.planBuilder = new PlanBuilder(this.epsilon);
+            this.planBuilder = new PlanBuilder(this.options.epsilon);
         }
 
-        if (this.onPlanReady) this.onPlanReady.apply(this, [this.plans]);
+        if (this.onPlanReady) { this.onPlanReady.apply(this, [this.plans]); }
     }
 
     /** Gets current plan's provisional makespan. */
@@ -126,7 +146,7 @@ export class PlanBuilder {
     parsingPlan = false;
     makespan = 0;
 
-    constructor(private epsilon: number) {}
+    constructor(private epsilon: number) { }
 
     parse(planLine: string, lineIndex: number | undefined): PlanStep | undefined {
         PddlPlanParser.planStepPattern.lastIndex = 0;
@@ -168,4 +188,55 @@ export class PlanBuilder {
     getMakespan(): number {
         return this.makespan;
     }
+}
+
+class XmlPlanBuilder {
+
+    private xmlText = '';
+
+    static isXmlStart(outputLine: string): boolean {
+        return outputLine.match(/<\?xml /) !== null;
+    }
+
+    appendLine(outputLine: string) {
+        this.xmlText += outputLine;
+    }
+
+    isComplete(): boolean {
+        return this.xmlText.match(/<\/Plan>\s*$/) !== null;
+    }
+
+    async getPlanSteps(): Promise<PlanStep[]> {
+        const xml2js = require('xml2js');
+        const pxd = require('parse-xsd-duration');
+        let parser = new xml2js.Parser();
+        var plan: any;
+        try {
+            plan = await parser.parseStringPromise(this.xmlText);
+        } catch (err) {
+            console.log(err);
+            throw err;
+        }
+        const steps: PlanStep[] = [];
+        for (let happening of plan.Plan.Actions[0].OrderedHappening) {
+            //const happeningId = happening.HappeningID[0];
+            if (happening.Happening[0].ActionStart) {
+                const actionStart = happening.Happening[0].ActionStart[0];
+                const startTime = pxd.default(actionStart.ExpectedStartTime[0]);
+                const actionName = actionStart.Name[0];
+                const actionParameters = actionStart.Parameters 
+                    ? ' ' + actionStart.Parameters[0].Parameter.map((p: any) => p.Symbol[0]).join(' ') 
+                    : '';
+                const isDurative = actionStart.ExpectedDuration !== undefined;
+                const duration = isDurative ? pxd.default(actionStart.ExpectedDuration[0]) : null;
+                steps.push(new PlanStep(startTime, actionName + actionParameters, isDurative, duration, -1));
+            }
+        }
+        return steps;
+    }
+}
+
+export interface PddlPlanParserOptions {
+    epsilon: number;
+    minimumPlansExpected?: number;
 }

@@ -5,26 +5,33 @@
 'use strict';
 
 import {
-    window, ExtensionContext, Uri, ViewColumn, WebviewPanel, commands, workspace, ConfigurationTarget
+    window, ExtensionContext, Uri, ViewColumn, WebviewPanel, commands, workspace, ConfigurationTarget, extensions, TextDocument
 } from 'vscode';
 
 import { PddlConfiguration } from '../configuration';
 
 import * as path from 'path';
-
-import * as fs from 'fs';
-import { getWebViewHtml, writeFile, readFile } from '../utils';
+import { getWebViewHtml, createPddlExtensionContext } from '../utils';
+import * as afs from '../../../common/src/asyncfs';
+import { Val } from '../validation/Val';
+import { VAL_DOWNLOAD_COMMAND, ValDownloadOptions } from '../validation/valCommand';
+import { PTEST_VIEW } from '../ptest/PTestCommands';
 
 export const SHOULD_SHOW_OVERVIEW_PAGE = 'shouldShowOverviewPage';
 export const LAST_SHOWN_OVERVIEW_PAGE = 'lastShownOverviewPage';
 
 export class OverviewPage {
 
-    private webViewPanel: WebviewPanel
+    private webViewPanel: WebviewPanel;
+    private iconsInstalled: boolean;
 
-    constructor(private context: ExtensionContext, private pddlConfiguration: PddlConfiguration) {
+    private readonly ICONS_EXTENSION_NAME = "vscode-icons-team.vscode-icons";
+
+    constructor(private context: ExtensionContext, private pddlConfiguration: PddlConfiguration, private val: Val) {
         commands.registerCommand("pddl.showOverview", () => this.showWelcomePage(true));
         workspace.onDidChangeConfiguration(_ => this.updatePageConfiguration(), undefined, this.context.subscriptions);
+        extensions.onDidChange(() => this.updateIconsAlerts(), this.context.subscriptions);
+        this.updateIconsAlerts();
     }
 
     async showWelcomePage(showAnyway: boolean): Promise<void> {
@@ -83,7 +90,7 @@ export class OverviewPage {
     async handleMessage(message: any): Promise<void> {
         console.log(`Message received from the webview: ${message.command}`);
 
-        switch(message.command){
+        switch (message.command) {
             case 'shouldShowOverview':
                 this.context.globalState.update(SHOULD_SHOW_OVERVIEW_PAGE, message.value);
                 break;
@@ -91,16 +98,38 @@ export class OverviewPage {
                 try {
                     await this.helloWorld();
                 }
-                catch(ex){
-                    window.showErrorMessage(ex);
+                catch (ex) {
+                    window.showErrorMessage(ex.message || ex);
+                }
+                break;
+            case 'openNunjucksSample':
+                try {
+                    await this.openNunjucksSample();
+                }
+                catch (ex) {
+                    window.showErrorMessage(ex.message || ex);
                 }
                 break;
             case 'clonePddlSamples':
-                commands.executeCommand("git.clone", Uri.parse("https://github.com/jan-dolejsi/vscode-pddl-samples"));
+                commands.executeCommand("git.clone", "https://github.com/jan-dolejsi/vscode-pddl-samples.git");
                 break;
             case 'plannerOutputTarget':
                 workspace.getConfiguration("pddlPlanner").update("executionTarget", message.value, ConfigurationTarget.Global);
                 break;
+            case 'installIcons':
+                try {
+                    await commands.executeCommand("workbench.extensions.installExtension", this.ICONS_EXTENSION_NAME);
+                }
+                catch (err) {
+                    window.showErrorMessage("Could not install the VS Code Icons extension: " + err);
+                }
+                break;
+            case 'enableIcons':
+                await workspace.getConfiguration().update("workbench.iconTheme", "vscode-icons", ConfigurationTarget.Global);
+                break;
+            case 'downloadVal':
+                let options: ValDownloadOptions = { bypassConsent: message.informedDecision };
+                await commands.executeCommand(VAL_DOWNLOAD_COMMAND, options);
             default:
                 console.warn('Unexpected command: ' + message.command);
         }
@@ -109,46 +138,101 @@ export class OverviewPage {
     CONTENT_FOLDER = "overview";
 
     async helloWorld(): Promise<void> {
+        let sampleDocuments = await this.createSample('helloworld', 'Hello World!');
+
+        let documentsToOpen = await this.openSampleFiles(sampleDocuments, ['domain.pddl', 'problem.pddl']);
+
+        let workingDirectory = path.dirname(documentsToOpen[0].fileName);
+        commands.executeCommand("pddl.planAndDisplayResult", documentsToOpen[0].uri, documentsToOpen[1].uri, workingDirectory, "");
+    }
+
+    async openNunjucksSample(): Promise<void> {
+        let sampleDocuments = await this.createSample('nunjucks', 'Nunjucks template sample');
+
+        // let documentsToOpen = 
+        await this.openSampleFiles(sampleDocuments, ['domain.pddl', 'problem.pddl', 'problem0.json']);
+        
+        let ptestJson = sampleDocuments.find(doc => path.basename(doc.fileName) === '.ptest.json');
+        let generatedProblemUri = ptestJson.uri.with({fragment: '0'});
+
+        await commands.executeCommand(PTEST_VIEW, generatedProblemUri);
+
+        // let workingDirectory = path.dirname(documentsToOpen[0].fileName);
+        // commands.executeCommand("pddl.planAndDisplayResult", documentsToOpen[0].uri, generatedProblemUri, workingDirectory, "");
+    }
+
+    async openSampleFiles(sampleDocuments: TextDocument[], fileNamesToOpen: string[]): Promise<TextDocument[]> {
+        let documentsToOpen = fileNamesToOpen
+            .map(fileName => sampleDocuments.find(doc => path.basename(doc.fileName) === fileName));
+
+        // were all files found?
+        if (documentsToOpen.some(v => !v)) {
+            throw new Error('One or more sample files were not found: ' + fileNamesToOpen);
+        }
+
+        for (let index = 0; index < documentsToOpen.length; index++) {
+            const doc = sampleDocuments[index];
+            const viewColumn: ViewColumn = this.indexToViewColumn(index);
+            await window.showTextDocument(doc, { viewColumn: viewColumn, preview: false });
+        }
+
+        return documentsToOpen;
+    }
+
+    indexToViewColumn(index: number): ViewColumn {
+        switch (index) {
+            case 0: return ViewColumn.One;
+            case 1: return ViewColumn.Two;
+            case 2: return ViewColumn.Three;
+            case 3: return ViewColumn.Four;
+            default: return ViewColumn.Five;
+        }
+    }
+
+    async createSample(subDirectory: string, sampleName: string): Promise<TextDocument[]> {
         let folder: Uri = undefined;
 
-        if (workspace.workspaceFolders.length == 0) {
-            let folders = await window.showOpenDialog({canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Select folder for hello world...'});
+        if (!workspace.workspaceFolders || workspace.workspaceFolders.length === 0) {
+            let folders = await window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: `Select folder for the '${sampleName}' sample...` });
             if (folders) {
                 folder = folders[0];
             }
-        } else if (workspace.workspaceFolders.length == 1) {
+        } else if (workspace.workspaceFolders.length === 1) {
             folder = workspace.workspaceFolders[0].uri;
         } else {
-            let selectedFolder = await window.showWorkspaceFolderPick({placeHolder: 'Select workspace folder for Hello World!'});
+            let selectedFolder = await window.showWorkspaceFolderPick({ placeHolder: `Select workspace folder for the '${sampleName}' sample...` });
             folder = selectedFolder.uri;
         }
 
-        let domainResourcePath = this.context.asAbsolutePath('overview/domain.pddl');
-        let domainText = await readFile(domainResourcePath, { encoding: "utf-8" });
-        let domainPath = path.join(folder.fsPath, "domain.pddl");
-        if (fs.existsSync(domainPath)) throw new Error("File 'domain.pddl' already exists.");
-        await writeFile(domainPath, domainText, {encoding: "utf-8"});
-        let domainDocument = await workspace.openTextDocument(domainPath);
-        await window.showTextDocument(domainDocument, {viewColumn: ViewColumn.One, preview: false});
+        let sampleFiles = await afs.readdir(this.context.asAbsolutePath(path.join(this.CONTENT_FOLDER, subDirectory)));
 
-        let problemResourcePath = this.context.asAbsolutePath('overview/problem.pddl');
-        let problemText = await readFile(problemResourcePath, { encoding: "utf-8" });
-        let problemPath = path.join(folder.fsPath, "problem.pddl");
-        if (fs.existsSync(problemPath)) throw new Error("File 'problem.pddl' already exists.");
-        await writeFile(problemPath, problemText, {encoding: "utf-8"});
-        let problemDocument = await workspace.openTextDocument(problemPath);
-        window.showTextDocument(problemDocument, {viewColumn: ViewColumn.Two, preview: false});
+        let sampleDocumentPromises = sampleFiles
+            .map(async (sampleFile) => {
+                let sampleResourcePath = this.context.asAbsolutePath(path.join(this.CONTENT_FOLDER, subDirectory, sampleFile));//'overview/helloWorld/domain.pddl'
+                let sampleText = await afs.readFile(sampleResourcePath, { encoding: "utf-8" });
+                let sampleTargetPath = path.join(folder.fsPath, sampleFile);//"helloWorldDomain.pddl"
+                if (await afs.exists(sampleTargetPath)) { throw new Error(`File '${sampleFile}' already exists.`); }
+                await afs.writeFile(sampleTargetPath, sampleText, { encoding: "utf-8" });
+                let sampleDocument = await workspace.openTextDocument(sampleTargetPath);
+                return sampleDocument;
+            });
 
-        commands.executeCommand("pddl.planAndDisplayResult", domainDocument.uri, problemDocument.uri, folder.fsPath, "");
+        let sampleDocuments = await Promise.all(sampleDocumentPromises);
+        return sampleDocuments;
     }
 
     async getHtml(): Promise<string> {
-        let html = getWebViewHtml(this.context, this.CONTENT_FOLDER, 'overview.html');
+        let html = getWebViewHtml(createPddlExtensionContext(this.context), this.CONTENT_FOLDER, 'overview.html');
         return html;
     }
 
+    updateIconsAlerts(): void {
+        this.iconsInstalled = extensions.getExtension(this.ICONS_EXTENSION_NAME) !== undefined;
+        this.updatePageConfiguration();
+    }
+
     async updatePageConfiguration(): Promise<void> {
-        if (!this.webViewPanel) return;
+        if (!this.webViewPanel) { return; }
         let message = {
             command: 'updateConfiguration',
             planner: await this.pddlConfiguration.getPlannerPath(),
@@ -156,7 +240,11 @@ export class OverviewPage {
             parser: await this.pddlConfiguration.getParserPath(),
             validator: await this.pddlConfiguration.getValidatorPath(),
             shouldShow: this.context.globalState.get<boolean>(SHOULD_SHOW_OVERVIEW_PAGE, true),
-            autoSave: workspace.getConfiguration().get<String>("files.autoSave")
+            autoSave: workspace.getConfiguration().get<String>("files.autoSave"),
+            showInstallIconsAlert: !this.iconsInstalled,
+            showEnableIconsAlert: this.iconsInstalled && workspace.getConfiguration().get<String>("workbench.iconTheme") !== "vscode-icons",
+            downloadValAlert: !this.pddlConfiguration.getValidatorPath() || !(await this.val.isInstalled()),
+            updateValAlert: await this.val.isNewValVersionAvailable()
         };
         this.webViewPanel.webview.postMessage(message);
     }

@@ -10,17 +10,19 @@ import {
 
 import * as path from 'path';
 
-import { DomainInfo, TypeObjects } from '../../../common/src/parser';
+import { DomainInfo, TypeObjects } from '../../../common/src/DomainInfo';
 import { SwimLane } from '../../../common/src/SwimLane';
-import { PlanStep } from '../../../common/src/PlanStep';
+import { PlanStep, PlanStepCommitment } from '../../../common/src/PlanStep';
 import { HappeningType } from '../../../common/src/HappeningsInfo';
 import { Plan, HelpfulAction } from '../../../common/src/Plan';
 import { Util } from '../../../common/src/util';
 import { PlanFunctionEvaluator } from './PlanFunctionEvaluator';
 import { PlanReportSettings } from './PlanReportSettings';
-import { VAL_STEP_PATH, CONF_PDDL, PDDL_PLANNER, VALUE_SEQ_PATH } from '../configuration';
-import { readFile } from '../utils';
-
+import { VAL_STEP_PATH, CONF_PDDL, VALUE_SEQ_PATH } from '../configuration';
+import * as afs from '../../../common/src/asyncfs';
+import { ValStepError, ValStep } from '../debugger/ValStep';
+import { ensureAbsolutePath } from '../utils';
+import { PddlWorkspace } from '../../../common/src/PddlWorkspace';
 const DIGITS = 4;
 
 export class PlanReportGenerator {
@@ -28,16 +30,16 @@ export class PlanReportGenerator {
     planStepHeight = 20;
     settings: Map<Plan, PlanReportSettings> = new Map();
 
-    constructor(private context: ExtensionContext, private displayWidth: number, private selfContained: boolean) {
+    constructor(private context: ExtensionContext, private options: PlanReportOptions) {
 
     }
 
-    async export(plans: Plan[], planId: number) {
+    async export(plans: Plan[], planId: number): Promise<boolean> {
         let html = await this.generateHtml(plans, planId);
 
-        let htmlFile = Util.toFile("plan-report", ".html", html);
+        let htmlFile = await Util.toFile("plan-report", ".html", html);
 
-        env.openExternal(Uri.parse("file://" + htmlFile));
+        return env.openExternal(Uri.parse("file://" + htmlFile));
     }
 
     async generateHtml(plans: Plan[], planId: number = -1): Promise<string> {
@@ -75,7 +77,7 @@ export class PlanReportGenerator {
 
     asAbsolutePath(...paths: string[]): Uri {
         let uri = Uri.file(this.context.asAbsolutePath(path.join(...paths)));
-        if (!this.selfContained) {
+        if (!this.options.selfContained) {
             uri = uri.with({ scheme: "vscode-resource" });
         }
         return uri;
@@ -83,13 +85,18 @@ export class PlanReportGenerator {
 
     renderPlanSelector(plan: Plan, planIndex: number, selectedPlan: number, maxCost: number): string {
         let className = "planSelector";
-        if (planIndex == selectedPlan) className += " planSelector-selected";
+        if (planIndex === selectedPlan) { className += " planSelector-selected"; }
 
         let normalizedCost = plan.cost / maxCost * 100;
+        let costRounded = plan.cost ? plan.cost.toFixed(DIGITS) : NaN;
+        let tooltip = `Plan #${planIndex}
+Metric value / cost: ${plan.cost}
+Makespan: ${plan.makespan}
+States evaluated: ${plan.statesEvaluated}`;
 
         return `
-        <div class="${className}" plan="${planIndex}" onclick="showPlan(${planIndex})"><span>${plan.cost}</span>
-            <div class="planMetricBar" style="height: ${normalizedCost}px"></div>
+        <div class="${className}" plan="${planIndex}" onclick="showPlan(${planIndex})"><span>${costRounded}</span>
+            <div class="planMetricBar" style="height: ${normalizedCost}px" title="${tooltip}"></div>
         </div>`;
     }
 
@@ -97,12 +104,32 @@ export class PlanReportGenerator {
         if (this.settings.has(plan)) {
             return this.settings.get(plan).shouldDisplay(planStep);
         }
-        else return true;
+        else { return true; }
     }
 
     async renderPlan(plan: Plan, planIndex: number, selectedPlan: number): Promise<string> {
+        let planVisualizerPath: string;
         if (plan.domain) {
-            this.settings.set(plan, new PlanReportSettings(plan.domain.fileUri));
+            const settings = new PlanReportSettings(plan.domain.fileUri);
+            planVisualizerPath = settings.getPlanVisualizerScript();
+            this.settings.set(plan, settings);
+        }
+
+        let styleDisplay = planIndex === selectedPlan ? "block" : "none";
+
+        let stateViz = '';
+        if (planVisualizerPath) {
+            let absPath = path.join(PddlWorkspace.getFolderPath(plan.domain.fileUri), planVisualizerPath);
+            try{
+                delete require.cache[require.resolve(absPath)];
+                const visualize = require(absPath);
+                stateViz = visualize(plan, 300, 100);
+                // todo: document.getElementById("stateviz").innerHTML = stateViz;
+                stateViz = `<div class="stateView" plan="${planIndex}" style="margin: 5px; width: 300px; height: 100px; display: ${styleDisplay};">${stateViz}</div>`;
+            }
+            catch(ex) {
+                console.log(ex);
+            }
         }
 
         let stepsToDisplay = plan.steps
@@ -125,22 +152,20 @@ export class PlanReportGenerator {
 
         let ganttChartHeight = (stepsToDisplay.length + oneIfHelpfulActionsPresent) * this.planStepHeight;
 
-        let styleDisplay = planIndex == selectedPlan ? "block" : "none";
-
         let ganttChart = `    <div class="gantt" plan="${planIndex}" style="margin: 5px; height: ${ganttChartHeight}px; display: ${styleDisplay};">
     ${ganttChartHtml}
         </div>`;
 
         let objectsHtml = '';
-        if (plan.domain && plan.problem) {
+        if (!this.options.disableSwimLaneView && plan.domain && plan.problem) {
             let allTypeObjects = TypeObjects.concatObjects(plan.domain.constants, plan.problem.objects);
 
             objectsHtml = plan.domain.getTypes()
-                .filter(type => type != "object")
+                .filter(type => type !== "object")
                 .map(type => {
-                    let typeObjects = allTypeObjects.find(to => to.type == type);
+                    let typeObjects = allTypeObjects.find(to => to.type === type);
                     return typeObjects
-                        ? this.renderTypeSwimLanes(type, typeObjects.objects, plan)
+                        ? this.renderTypeSwimLanes(type, typeObjects.getObjects(), plan)
                         : '';
                 }).join("\n");
         }
@@ -151,13 +176,13 @@ ${objectsHtml}
         </table>
     </div>`;
 
-        let valStepPath = workspace.getConfiguration(CONF_PDDL).get<string>(VAL_STEP_PATH);
-        let valueSeqPath = workspace.getConfiguration(PDDL_PLANNER).get<string>(VALUE_SEQ_PATH);
+        let valStepPath = ensureAbsolutePath(workspace.getConfiguration(CONF_PDDL).get<string>(VAL_STEP_PATH), this.context);
+        let valueSeqPath = ensureAbsolutePath(workspace.getConfiguration(CONF_PDDL).get<string>(VALUE_SEQ_PATH), this.context);
 
         let lineCharts = `    <div class="lineChart" plan="${planIndex}" style="display: ${styleDisplay};margin-top: 20px;">\n`;
         let lineChartScripts = '';
 
-        if (plan.domain && plan.problem) {
+        if (!this.options.disableLinePlots && plan.domain && plan.problem) {
             let evaluator = new PlanFunctionEvaluator(valueSeqPath, valStepPath, plan);
 
             if (evaluator.isAvailable()) {
@@ -168,20 +193,24 @@ ${objectsHtml}
 
                     functionValues.forEach((values, liftedVariable) => {
                         let chartDivId = `chart_${planIndex}_${liftedVariable.name}`;
-                        lineCharts += `        <div id="${chartDivId}" style="width: ${this.displayWidth + 100}px; height: ${Math.round(this.displayWidth / 2)}px"></div>\n`;
+                        lineCharts += `        <div id="${chartDivId}" style="width: ${this.options.displayWidth + 100}px; height: ${Math.round(this.options.displayWidth / 2)}px"></div>\n`;
                         let chartTitleWithUnit = liftedVariable.name;
-                        if (liftedVariable.getUnit()) chartTitleWithUnit += ` [${liftedVariable.getUnit()}]`;
-                        lineChartScripts += `        drawChart('${chartDivId}', '${chartTitleWithUnit}', '', ${JSON.stringify(values.legend)}, ${JSON.stringify(values.values)}, ${this.displayWidth});\n`;
+                        if (liftedVariable.getUnit()) { chartTitleWithUnit += ` [${liftedVariable.getUnit()}]`; }
+                        lineChartScripts += `        drawChart('${chartDivId}', '${chartTitleWithUnit}', '', ${JSON.stringify(values.legend)}, ${JSON.stringify(values.values)}, ${this.options.displayWidth});\n`;
                     });
                 } catch (err) {
                     console.log(err);
-                    window.showWarningMessage(err);
+                    this.handleValStepError(err, evaluator.getValStepPath());
                 }
+            }
+            else {
+                lineCharts += `<a href="command:pddl.downloadVal" title="Click to initiate download. You will be able to see what is being downloaded and from where...">Download plan validation tools (a.k.a. VAL) to see line plots of function values.</a>`;
             }
         }
         lineCharts += `\n    </div>`;
 
-        return `${this.selfContained ? '' : this.renderMenu()}
+        return `${this.options.selfContained || this.options.disableHamburgerMenu ? '' : this.renderMenu()}
+${stateViz}
 ${ganttChart}
 ${swimLanes}
 ${lineCharts}
@@ -189,12 +218,41 @@ ${lineCharts}
 `;
     }
 
+    private async handleValStepError(err: any, valStepPath: string): Promise<void> {
+        if (err instanceof ValStepError) {
+            try {
+                const exportCase = "Export valstep case...";
+                let choice = await window.showErrorMessage("ValStep failed to evaluate the plan values.", exportCase, "Ignore");
+                if (choice === exportCase) {
+                    let targetPathUris = await window.showOpenDialog({
+                        canSelectFolders: true, canSelectFiles: false,
+                        defaultUri: Uri.file(path.dirname(err.domain.fileUri)),
+                        openLabel: 'Select target folder'
+                    });
+                    if (!targetPathUris) { return; }
+                    let targetPath = targetPathUris[0];
+                    let outputPath = await ValStep.storeError(err, targetPath, valStepPath);
+                    let success = await env.openExternal(Uri.file(outputPath));
+                    if (!success) {
+                        window.showErrorMessage(`Files for valstep bug report: ${outputPath}.`);
+                    }
+                }
+            }
+            catch (err1) {
+                console.log(err1);
+            }
+        }
+        else {
+            window.showWarningMessage(err);
+        }
+    }
+
     renderHelpfulActions(plan: Plan, planHeadLength: number): string {
         if (plan.hasHelpfulActions()) {
             let fromTop = planHeadLength * this.planStepHeight;
             let fromLeft = this.toViewCoordinates(plan.now, plan);
             let text = plan.helpfulActions.map((helpfulAction, index) => this.renderHelpfulAction(index, helpfulAction)).join(', ');
-            return `\n        <div class="planstep" style="top: ${fromTop}px; left: ${fromLeft}px; margin-top: 3px">▶${text}</div>`;
+            return `\n        <div class="planstep" style="top: ${fromTop}px; left: ${fromLeft}px; margin-top: 3px">▶ ${text}</div>`;
         }
         else {
             return '';
@@ -218,7 +276,9 @@ ${lineCharts}
     }
 
     isPlanHeadStep(step: PlanStep, plan: Plan): boolean {
-        return plan.now === undefined || step.getStartTime() <= plan.now;
+        return plan.now === undefined ||
+            step.commitment === PlanStepCommitment.Committed ||
+            step.commitment === PlanStepCommitment.EndsInRelaxedPlan;
     }
 
     createPlansChartsScript(plans: Plan[]) {
@@ -234,7 +294,7 @@ ${lineCharts}
     renderTypeSwimLanes(type: string, objects: string[], plan: Plan): string {
         return `            <tr>
                 <th>${type}</th>
-                <th style="width: ${this.displayWidth}px"></th>
+                <th style="width: ${this.options.displayWidth}px"></th>
             </tr>
 `
             + objects.map(obj => this.renderObjectSwimLane(obj, plan)).join('\n');
@@ -244,7 +304,7 @@ ${lineCharts}
         let subLanes = new SwimLane(1);
         let stepsInvolvingThisObject = plan.steps
             .filter(step => this.shouldDisplay(step, plan))
-            .filter(step => step.objects.includes(obj.toLowerCase()))
+            .filter(step => step.getObjects().includes(obj.toLowerCase()))
             .map(step => this.renderSwimLameStep(step, plan, obj, subLanes))
             .join('\n');
 
@@ -260,20 +320,20 @@ ${stepsInvolvingThisObject}
     renderSwimLameStep(step: PlanStep, plan: Plan, thisObj: string, swimLanes: SwimLane): string {
         let actionColor = this.getActionColor(step, plan.domain);
         let leftOffset = this.computeLeftOffset(step, plan);
-        let width = this.computeWidth(step, plan);
-        let objects = step.objects
-            .map(obj => obj.toLowerCase() == thisObj.toLowerCase() ? '@' : obj)
+        let width = this.computeWidth(step, plan) + this.computeRelaxedWidth(step, plan);
+        let objects = step.getObjects()
+            .map(obj => obj.toLowerCase() === thisObj.toLowerCase() ? '@' : obj)
             .join(' ');
 
         let availableLane = swimLanes.placeNext(leftOffset, width);
         let fromTop = availableLane * this.planStepHeight + 1;
 
         return `
-                    <div class="resourceTaskTooltip" style="background-color: ${actionColor}; left: ${leftOffset}px; width: ${width}px; top: ${fromTop}px;">${step.actionName} ${objects}<span class="resourceTaskTooltipText">${this.toActionTooltip(step)}</span></div>`;
-    };
+                    <div class="resourceTaskTooltip" style="background-color: ${actionColor}; left: ${leftOffset}px; width: ${width}px; top: ${fromTop}px;">${step.getActionName()} ${objects}<span class="resourceTaskTooltipText">${this.toActionTooltip(step)}</span></div>`;
+    }
 
     renderGanttStep(step: PlanStep, index: number, plan: Plan, planIndex: number): string {
-        let actionLink = this.toActionLink(step.actionName, plan);
+        let actionLink = this.toActionLink(step.getActionName(), plan);
 
         let fromTop = index * this.planStepHeight;
         let fromLeft = this.computeLeftOffset(step, plan);
@@ -282,11 +342,11 @@ ${stepsInvolvingThisObject}
 
         let actionColor = plan.domain ? this.getActionColor(step, plan.domain) : 'gray';
 
-        return `        <div class="planstep" id="plan${planIndex}step${index}" style="left: ${fromLeft}px; top: ${fromTop}px; "><div class="planstep-bar" title="${this.toActionTooltipPlain(step)}" style="width: ${width}px; background-color: ${actionColor}"></div><div class="planstep-bar-relaxed whitecarbon" style="width: ${widthRelaxed}px;"></div>${actionLink} ${step.objects.join(' ')}</div>`;
+        return `        <div class="planstep" id="plan${planIndex}step${index}" style="left: ${fromLeft}px; top: ${fromTop}px; "><div class="planstep-bar" title="${this.toActionTooltipPlain(step)}" style="width: ${width}px; background-color: ${actionColor}"></div><div class="planstep-bar-relaxed whitecarbon" style="width: ${widthRelaxed}px;"></div>${actionLink} ${step.getObjects().join(' ')}</div>`;
     }
 
     toActionLink(actionName: string, plan: Plan): string {
-        if (this.selfContained || !plan.domain) {
+        if (this.options.selfContained || !plan.domain) {
             return actionName;
         }
         else {
@@ -300,19 +360,24 @@ ${stepsInvolvingThisObject}
             `<tr><td class="actionToolTip">Duration: </td><td class="actionToolTip">${step.getDuration().toFixed(DIGITS)}</td></tr>
             <tr><td class="actionToolTip">End: </td><td class="actionToolTip">${step.getEndTime().toFixed(DIGITS)}</td></tr>` :
             '';
-        return `<table><tr><th colspan="2" class="actionToolTip">${step.actionName}.toFixed(DIGITS) ${step.objects.join(' ')}</th></tr><tr><td class="actionToolTip" style="width:50px">Start:</td><td class="actionToolTip">${step.getStartTime().toFixed(DIGITS)}</td></tr>${durationRow}</table>`;
+        return `<table><tr><th colspan="2" class="actionToolTip">${step.getActionName()} ${step.getObjects().join(' ')}</th></tr><tr><td class="actionToolTip" style="width:50px">Start:</td><td class="actionToolTip">${step.getStartTime().toFixed(DIGITS)}</td></tr>${durationRow}</table>`;
     }
 
     toActionTooltipPlain(step: PlanStep): string {
         let durationRow = step.isDurative ?
             `Duration: ${step.getDuration().toFixed(DIGITS)}, End: ${step.getEndTime().toFixed(DIGITS)}` :
             '';
-        return `${step.actionName} ${step.objects.join(' ')}, Start: ${step.getStartTime().toFixed(DIGITS)} ${durationRow}`;
+
+        let startTime = step.getStartTime() !== undefined ?
+            `, Start: ${step.getStartTime().toFixed(DIGITS)}` :
+            '';
+
+        return `${step.getActionName()} ${step.getObjects().join(' ')}${startTime} ${durationRow}`;
     }
 
     async includeStyle(uri: Uri): Promise<string> {
-        if (this.selfContained) {
-            let styleText = await readFile(uri.fsPath, { encoding: 'utf-8' });
+        if (this.options.selfContained) {
+            let styleText = await afs.readFile(uri.fsPath, { encoding: 'utf-8' });
             return `<style>\n${styleText}\n</style>`;
         } else {
             return `<link rel = "stylesheet" type = "text/css" href = "${uri.toString()}" />`;
@@ -320,8 +385,8 @@ ${stepsInvolvingThisObject}
     }
 
     async includeScript(uri: Uri): Promise<string> {
-        if (this.selfContained) {
-            let scriptText = await readFile(uri.fsPath, { encoding: 'utf-8' });
+        if (this.options.selfContained) {
+            let scriptText = await afs.readFile(uri.fsPath, { encoding: 'utf-8' });
             return `<script>\n${scriptText}\n</script>`;
         } else {
             return `<script src="${uri.toString()}"></script>`;
@@ -342,10 +407,24 @@ ${stepsInvolvingThisObject}
     }
 
     computePlanHeadDuration(step: PlanStep, plan: Plan): number {
-        if (plan.now === undefined) return step.getDuration();
-        else if (step.getEndTime() < plan.now) return step.getDuration();
-        else if (step.getStartTime() >= plan.now) return 0;
-        else return Math.min(step.getDuration(), plan.now - step.getStartTime());
+        if (plan.now === undefined) { return step.getDuration(); }
+        else if (step.getEndTime() < plan.now) {
+            if (step.commitment === PlanStepCommitment.Committed) { return step.getDuration(); }
+            else { return 0; } // the end was not committed yet
+        }
+        else if (step.getStartTime() >= plan.now) { return 0; }
+        else {
+            switch (step.commitment) {
+                case PlanStepCommitment.Committed:
+                    return step.getDuration();
+                case PlanStepCommitment.EndsInRelaxedPlan:
+                    return 0;
+                case PlanStepCommitment.StartsInRelaxedPlan:
+                    return plan.now - step.getStartTime();
+                default:
+                    return 0; // should not happen
+            }
+        }
     }
 
     computeWidth(step: PlanStep, plan: Plan): number {
@@ -363,16 +442,23 @@ ${stepsInvolvingThisObject}
 
     /** Converts the _time_ argument to view coordinates */
     toViewCoordinates(time: number, plan: Plan): number {
-        return time / plan.makespan * this.displayWidth;
+        return time / plan.makespan * this.options.displayWidth;
     }
 
     getActionColor(step: PlanStep, domain: DomainInfo): string {
-        let actionIndex = domain.actions.findIndex(action => action.name.toLowerCase() == step.actionName.toLowerCase());
+        let actionIndex = domain.actions.findIndex(action => action.name.toLowerCase() === step.getActionName().toLowerCase());
         let actionColor = this.colors[actionIndex * 7 % this.colors.length];
 
         return actionColor;
     }
 
     colors = ['#ff0000', '#ff4000', '#ff8000', '#ffbf00', '#ffff00', '#bfff00', '#80ff00', '#40ff00', '#00ff00', '#00ff40', '#00ff80', '#00ffbf', '#00ffff', '#00bfff', '#0080ff', '#0040ff', '#0000ff', '#4000ff', '#8000ff', '#bf00ff', '#ff00ff', '#ff00bf', '#ff0080', '#ff0040'];
+}
 
+export interface PlanReportOptions {
+    displayWidth: number;
+    selfContained?: boolean;
+    disableSwimLaneView?: boolean;
+    disableLinePlots?: boolean;
+    disableHamburgerMenu?: boolean;
 }

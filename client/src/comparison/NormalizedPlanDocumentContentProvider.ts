@@ -8,11 +8,14 @@ import { CancellationToken, Event, EventEmitter, TextDocumentContentProvider, Ur
 import { Parser, UNSPECIFIED_DOMAIN } from '../../../common/src/parser';
 import { PddlPlanParser } from '../../../common/src/PddlPlanParser';
 import { PlanStep } from '../../../common/src/PlanStep';
-import { PddlWorkspace } from '../../../common/src/workspace-model';
+import { PddlWorkspace } from '../../../common/src/PddlWorkspace';
 import { PddlConfiguration } from '../configuration';
-import { getDomainAndProblemForPlan } from '../utils';
+import { getDomainAndProblemForPlan } from '../workspace/workspaceUtils';
 import { PlanEvaluator } from './PlanEvaluator';
 import { AbstractPlanExporter } from '../planning/PlanExporter';
+import { PlanningDomains } from '../catalog/PlanningDomains';
+import { HTTPLAN } from '../catalog/Catalog';
+import { SimpleDocumentPositionResolver } from '../../../common/src/DocumentPositionResolver';
 
 
 /**
@@ -33,12 +36,14 @@ export class NormalizedPlanDocumentContentProvider implements TextDocumentConten
 
     dispose() {
         this._onDidChange.dispose();
-        if (this.timeout) clearTimeout(this.timeout);
+        if (this.timeout) { clearTimeout(this.timeout); }
     }
 
     planChanged(uri: Uri): void {
-        if (this.timeout) clearTimeout(this.timeout);
-        if (!this.changingUris.some(uri1 => uri1.toString() === uri.toString())) this.changingUris.push(uri);
+        if (this.timeout) { clearTimeout(this.timeout); }
+        if (!this.changingUris.some(uri1 => uri1.toString() === uri.toString())) {
+            this.changingUris.push(uri);
+        }
         this.timeout = setTimeout(() => this.updateChangedPlans(), 1000);
     }
 
@@ -49,9 +54,11 @@ export class NormalizedPlanDocumentContentProvider implements TextDocumentConten
     }
 
     provideTextDocumentContent(uri: Uri, token: CancellationToken): string | Thenable<string> {
-        if (token.isCancellationRequested) return "Canceled";
+        if (token.isCancellationRequested) { return "Canceled"; }
 
-        let fileUri = uri.with({ scheme: 'file' });
+        let newScheme = (uri.authority === PlanningDomains.AUTHORITY) ? HTTPLAN : 'file';
+
+        let fileUri = uri.with({ scheme: newScheme });
 
         return workspace.openTextDocument(fileUri)
             .then(document => document.getText())
@@ -64,8 +71,9 @@ export class NormalizedPlanDocumentContentProvider implements TextDocumentConten
         if (this.includeFinalValues) {
             try {
                 let planValuesAsText = await this.evaluate(uri, origText);
-                if (planValuesAsText)
+                if (planValuesAsText) {
                     normalizedPlan = `${normalizedPlan}\n\n;; Modified state values:\n\n${planValuesAsText}`;
+                }
             }
             catch (err) {
                 window.showWarningMessage(err.toString());
@@ -78,7 +86,7 @@ export class NormalizedPlanDocumentContentProvider implements TextDocumentConten
     async evaluate(uri: Uri, origText: string): Promise<string> {
         let planMetaData = Parser.parsePlanMeta(origText);
         if (planMetaData.domainName !== UNSPECIFIED_DOMAIN && planMetaData.problemName !== UNSPECIFIED_DOMAIN) {
-            let planInfo = this.pddlWorkspace.parser.parsePlan(uri.toString(), -1, origText, this.configuration.getEpsilonTimeStep());
+            let planInfo = this.pddlWorkspace.parser.parsePlan(uri.toString(), -1, origText, this.configuration.getEpsilonTimeStep(), new SimpleDocumentPositionResolver(origText));
 
             let context = getDomainAndProblemForPlan(planInfo, this.pddlWorkspace);
             let planValues = await new PlanEvaluator(this.configuration).evaluate(context.domain, context.problem, planInfo);
@@ -109,21 +117,23 @@ class PlanParserAndNormalizer {
 
     normalize(origText: string): string {
         var compare = function (step1: PlanStep, step2: PlanStep): number {
-            if (step1.getStartTime() != step2.getStartTime())
+            if (step1.getStartTime() !== step2.getStartTime()) {
                 return step1.getStartTime() - step2.getStartTime();
-            else
+            }
+            else {
                 return step1.fullActionName.localeCompare(step2.fullActionName);
+            }
         };
 
         let planMeta = Parser.parsePlanMeta(origText);
         let normalizedText = AbstractPlanExporter.getPlanMeta(planMeta.domainName, planMeta.problemName)
-            + "\n; Normalized plan:\n" 
+            + "\n; Normalized plan:\n"
             + origText.split('\n')
-            .map((origLine, idx) => this.parseLine(origLine, idx))
-            .filter(step => step != null)
-            .sort(compare)
-            .map(step => step.toPddl())
-            .join('\n');
+                .map((origLine, idx) => this.parseLine(origLine, idx))
+                .filter(step => step !== null && step !== undefined)
+                .sort(compare)
+                .map(step => step.toPddl())
+                .join('\n');
 
         return normalizedText;
     }
@@ -139,7 +149,7 @@ class PlanParserAndNormalizer {
             let time = group[2] ? parseFloat(group[2]) : this.makespan;
 
             if (!this.firstLineParsed) {
-                if (time == 0) {
+                if (time === 0) {
                     this.timeOffset = -this.epsilon;
                 }
                 this.firstLineParsed = true;

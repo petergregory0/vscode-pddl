@@ -10,17 +10,17 @@ import {
 
 import * as process from 'child_process';
 
-import { PddlWorkspace } from '../../../common/src/workspace-model';
-import { DomainInfo, ProblemInfo } from '../../../common/src/parser';
-import { PddlLanguage } from '../../../common/src/FileInfo';
+import { ProblemInfo } from '../../../common/src/parser';
+import { DomainInfo } from '../../../common/src/DomainInfo';
 import { HappeningsInfo, Happening } from "../../../common/src/HappeningsInfo";
 import { PddlConfiguration } from '../configuration';
 import { Util } from '../../../common/src/util';
 import { dirname } from 'path';
 import { PlanStep } from '../../../common/src/PlanStep';
-import { DomainAndProblem, isHappenings, getDomainAndProblemForHappenings } from '../utils';
+import { DomainAndProblem, isHappenings, getDomainAndProblemForHappenings } from '../workspace/workspaceUtils';
 import { createRangeFromLine, createDiagnostic } from './PlanValidator';
 import { HappeningsToValStep } from './HappeningsToValStep';
+import { CodePddlWorkspace } from '../workspace/CodePddlWorkspace';
 
 export const PDDL_HAPPENINGS_VALIDATE = 'pddl.happenings.validate';
 
@@ -29,7 +29,7 @@ export const PDDL_HAPPENINGS_VALIDATE = 'pddl.happenings.validate';
  */
 export class HappeningsValidator {
 
-    constructor(private output: OutputChannel, public pddlWorkspace: PddlWorkspace, public plannerConfiguration: PddlConfiguration, context: ExtensionContext) {
+    constructor(private output: OutputChannel, public codePddlWorkspace: CodePddlWorkspace, public plannerConfiguration: PddlConfiguration, context: ExtensionContext) {
 
         context.subscriptions.push(commands.registerCommand(PDDL_HAPPENINGS_VALIDATE,
             async () => {
@@ -52,9 +52,11 @@ export class HappeningsValidator {
 
     async validateTextDocument(planDocument: TextDocument): Promise<HappeningsValidationOutcome> {
 
-        let planFileInfo = <HappeningsInfo>this.pddlWorkspace.upsertAndParseFile(planDocument.uri.toString(), PddlLanguage.PLAN, planDocument.version, planDocument.getText());
+        let planFileInfo = <HappeningsInfo> await this.codePddlWorkspace.upsertAndParseFile(planDocument);
 
-        if (!planFileInfo) return HappeningsValidationOutcome.failed(null, new Error("Cannot open or parse plan file."));
+        if (!planFileInfo) {
+            return HappeningsValidationOutcome.failed(null, new Error("Cannot open or parse plan file."));
+        }
 
         return this.validateAndReportDiagnostics(planFileInfo, true, _ => { }, _ => { });
     }
@@ -71,7 +73,7 @@ export class HappeningsValidator {
         let context: DomainAndProblem = null;
 
         try {
-            context = getDomainAndProblemForHappenings(happeningsInfo, this.pddlWorkspace);
+            context = getDomainAndProblemForHappenings(happeningsInfo, this.codePddlWorkspace.pddlWorkspace);
         } catch (err) {
             let outcome = HappeningsValidationOutcome.info(happeningsInfo, err);
             onSuccess(outcome.getDiagnostics());
@@ -101,8 +103,8 @@ export class HappeningsValidator {
         }
 
         // copy editor content to temp files to avoid using out-of-date content on disk
-        let domainFilePath = Util.toPddlFile('domain', context.domain.getText());
-        let problemFilePath = Util.toPddlFile('problem', context.problem.getText());
+        let domainFilePath = await Util.toPddlFile('domain', context.domain.getText());
+        let problemFilePath = await Util.toPddlFile('problem', context.problem.getText());
         let happeningsConverter = new HappeningsToValStep();
         happeningsConverter.convertAllHappenings(happeningsInfo);
         let valSteps = happeningsConverter.getExportedText(true);
@@ -110,13 +112,13 @@ export class HappeningsValidator {
         let args = [domainFilePath, problemFilePath];
         let child = process.spawnSync(valStepPath, args, { cwd: dirname(Uri.parse(happeningsInfo.fileUri).fsPath), input: valSteps });
 
-        if (showOutput) this.output.appendLine(valStepPath + ' ' + args.join(' '));
+        if (showOutput) { this.output.appendLine(valStepPath + ' ' + args.join(' ')); }
 
         let output = child.stdout.toString();
 
-        if (showOutput) this.output.appendLine(output);
+        if (showOutput) { this.output.appendLine(output); }
 
-        if (showOutput && child.stderr) {
+        if (showOutput && child.stderr && child.stderr.length) {
             this.output.append('Error:');
             this.output.appendLine(child.stderr.toString());
         }
@@ -124,7 +126,7 @@ export class HappeningsValidator {
         let outcome = this.analyzeOutput(happeningsInfo, child.error, output);
 
         if (child.error) {
-            if (showOutput) this.output.appendLine(`Error: name=${child.error.name}, message=${child.error.message}`);
+            if (showOutput) { this.output.appendLine(`Error: name=${child.error.name}, message=${child.error.message}`); }
             onError(child.error.name);
         }
         else {
@@ -176,7 +178,7 @@ export class HappeningsValidator {
 
     private isDomainAction(domain: DomainInfo, problem: ProblemInfo, happening: Happening): boolean {
         problem;
-        return domain.actions.some(a => a.name.toLowerCase() == happening.getAction().toLowerCase());
+        return domain.actions.some(a => a.name.toLowerCase() === happening.getAction().toLowerCase());
     }
 
     private isTimeMonotonociallyIncreasing(first: Happening, second: Happening): boolean {
@@ -244,7 +246,7 @@ class HappeningsValidationOutcome {
             happeningsInfo.getHappenings()
                 .find(happening => PlanStep.equalsWithin(happening.getTime(), timeStamp, 1e-4));
 
-        if (stepAtTimeStamp) errorLine = stepAtTimeStamp.lineIndex;
+        if (stepAtTimeStamp) { errorLine = stepAtTimeStamp.lineIndex; }
 
         let diagnostics = repairHints.map(hint => new Diagnostic(createRangeFromLine(errorLine), hint, DiagnosticSeverity.Warning));
         return new HappeningsValidationOutcome(happeningsInfo, diagnostics);

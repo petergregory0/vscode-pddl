@@ -12,7 +12,8 @@ import * as process from 'child_process';
 
 import { Validator } from './validator';
 import { ProblemPattern } from './ProblemPattern';
-import { DomainInfo, ProblemInfo } from '../../../common/src/parser';
+import { ProblemInfo } from '../../../common/src/parser';
+import { DomainInfo } from '../../../common/src/DomainInfo';
 import { PddlFactory } from '../../../common/src/PddlFactory';
 import { Util } from '../../../common/src/util';
 
@@ -20,12 +21,12 @@ export class ValidatorExecutable extends Validator {
     constructor(path: string, public syntax: string, public customPattern: string) { super(path); }
 
     validate(domainInfo: DomainInfo, problemFiles: ProblemInfo[], onSuccess: (diagnostics: Map<string, Diagnostic[]>) => void, onError: (error: string) => void): void {
-        let domainFilePath = Util.toPddlFile("domain", domainInfo.getText());
+        let domainFilePath = Util.toPddlFileSync("domain", domainInfo.getText());
 
         let diagnostics = this.createEmptyDiagnostics(domainInfo, problemFiles);
 
         if (!problemFiles.length) {
-            let problemFilePath = Util.toPddlFile("problem", PddlFactory.createEmptyProblem('dummy', domainInfo.name));
+            let problemFilePath = Util.toPddlFileSync("problem", PddlFactory.createEmptyProblem('dummy', domainInfo.name));
             let pathToUriMap: [string, string][] = [[domainFilePath, domainInfo.fileUri]];
 
             this.validateOneProblem(domainFilePath, problemFilePath, output => {
@@ -35,7 +36,7 @@ export class ValidatorExecutable extends Validator {
         }
         else {
             problemFiles.forEach(problemFile => {
-                let problemFilePath = Util.toPddlFile("problem", problemFile.getText());
+                let problemFilePath = Util.toPddlFileSync("problem", problemFile.getText());
                 let pathToUriMap: [string, string][] = [[domainFilePath, domainInfo.fileUri], [problemFilePath, problemFile.fileUri]];
 
                 // todo: the issues in the domain file should only be output once, not as many times as there are problem files
@@ -61,13 +62,18 @@ export class ValidatorExecutable extends Validator {
             patterns.push(new ProblemPattern(this.customPattern, filePaths));
         }
 
+        let distinctOutputs: string[] = [];
+
         patterns.forEach(pattern => {
             let match: RegExpExecArray;
             while (match = pattern.regEx.exec(output)) {
+                // only report each warning/error once
+                if (distinctOutputs.includes(match[0])) { continue; }
+                distinctOutputs.push(match[0]);
+                
+                let pathUriTuple = pathToUriMap.find(tuple => tuple[0] === pattern.getFilePath(match));
 
-                let pathUriTuple = pathToUriMap.find(tuple => tuple[0] == pattern.getFilePath(match))
-
-                if (!pathUriTuple) continue; // this is not a file of interest
+                if (!pathUriTuple) { continue; } // this is not a file of interest
 
                 let uri = pathUriTuple[1];
                 let diagnostic = new Diagnostic(pattern.getRange(match), pattern.getMessage(match),Validator.toSeverity(pattern.getSeverity(match)));
@@ -90,7 +96,7 @@ export class ValidatorExecutable extends Validator {
         let child = process.exec(command, (error, stdout, stderr) => {
             if (error && !child.killed) {
                 onError.apply(this, [error.message]);
-                console.log(stderr)
+                console.log(stderr);
             }
 
             onOutput.apply(this, [stdout]);

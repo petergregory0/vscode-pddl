@@ -13,7 +13,8 @@ const tree_kill = require('tree-kill');
 
 import { Planner } from './planner';
 import { PlannerResponseHandler } from './PlannerResponseHandler';
-import { DomainInfo, ProblemInfo } from '../../../common/src/parser';
+import { ProblemInfo } from '../../../common/src/parser';
+import { DomainInfo } from '../../../common/src/DomainInfo';
 import { Util } from '../../../common/src/util';
 import { PddlPlanParser } from '../../../common/src/PddlPlanParser';
 import { Plan } from "../../../common/src/Plan";
@@ -21,21 +22,23 @@ import { Plan } from "../../../common/src/Plan";
 export class PlannerExecutable extends Planner {
 
     // this property stores the reference to the planner child process, while planning is in progress
-    child: process.ChildProcess;
+    private child: process.ChildProcess;
 
-    constructor(plannerPath: string, plannerOptions: string, public plannerSyntax: string, public workingDirectory: string) {
-        super(plannerPath, plannerOptions);
+    constructor(plannerPath: string, private plannerOptions: string, private plannerSyntax: string, private workingDirectory: string) {
+        super(plannerPath);
     }
 
-    plan(domainFileInfo: DomainInfo, problemFileInfo: ProblemInfo, planParser: PddlPlanParser, parent: PlannerResponseHandler): Promise<Plan[]> {
+    async plan(domainFileInfo: DomainInfo, problemFileInfo: ProblemInfo, planParser: PddlPlanParser, parent: PlannerResponseHandler): Promise<Plan[]> {
 
-        let domainFilePath = Util.toPddlFile("domain", domainFileInfo.getText());
-        let problemFilePath = Util.toPddlFile("problem", problemFileInfo.getText());
+        let domainFilePath = await Util.toPddlFile("domain", domainFileInfo.getText());
+        let problemFilePath = await Util.toPddlFile("problem", problemFileInfo.getText());
 
         let command = this.plannerSyntax.replace('$(planner)', Util.q(this.plannerPath))
             .replace('$(options)', this.plannerOptions)
             .replace('$(domain)', Util.q(domainFilePath))
             .replace('$(problem)', Util.q(problemFilePath));
+
+        command += ' ' + parent.providePlannerOptions({ domain: domainFileInfo, problem: problemFileInfo });
 
         parent.handleOutput(command + '\n');
 
@@ -63,7 +66,7 @@ export class PlannerExecutable extends Planner {
                     }
 
                     let plans = planParser.getPlans();
-                    resolve(plans);
+                    resolve(plans); // todo: should we resolve() even if we reject()ed above?
                     thisPlanner.child = null;
                 });
 
@@ -75,8 +78,8 @@ export class PlannerExecutable extends Planner {
             thisPlanner.child.stderr.on('data', (data: any) => parent.handleOutput("Error: " + data));
 
             thisPlanner.child.on("close", (code: any, signal: any) => {
-                if (code) console.log("Exit code: " + code);
-                if (signal) console.log("Exit Signal: " + signal);
+                if (code) { console.log("Exit code: " + code); }
+                if (signal) { console.log("Exit Signal: " + signal); }
             });
         });
     }

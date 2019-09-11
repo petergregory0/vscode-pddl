@@ -8,71 +8,86 @@ import {
     Position, Range, Hover, Location, Uri, TextDocument, MarkdownString
 } from 'vscode';
 
-import { PddlWorkspace } from '../../common/src/workspace-model';
-import { toLanguageFromId, Action } from '../../common/src/parser';
-import { Variable, PddlRange } from '../../common/src/FileInfo';
+import { Action } from '../../../common/src/DomainInfo';
+import { Variable } from '../../../common/src/FileInfo';
+import { PddlRange } from '../../../common/src/DocumentPositionResolver';
+import { CodePddlWorkspace } from '../workspace/CodePddlWorkspace';
+import { PddlSyntaxNode } from '../../../common/src/PddlSyntaxNode';
+import { PddlTokenType } from '../../../common/src/PddlTokenizer';
 
 export class SymbolUtils {
-    constructor(public workspace: PddlWorkspace) { }
+    constructor(public workspace: CodePddlWorkspace) { }
 
     getSymbolInfo(document: TextDocument, position: Position): SymbolInfo {
-        let fileInfo = this.workspace.getFileInfo(document.uri.toString());
+        let fileInfo = this.workspace.getFileInfo(document);
 
-        let domainInfo = this.workspace.asDomain(fileInfo);
-        if (!domainInfo) return null;
+        let domainInfo = this.workspace.pddlWorkspace.asDomain(fileInfo);
+        if (!domainInfo) { return null; }
 
         let symbol = this.getSymbolAtPosition(document, position);
 
-        if (!symbol) return null;
+        if (!symbol) { return null; }
 
         if (symbol.isPrefixedBy('(')) {
             let symbolName = symbol.name.toLowerCase();
-            let predicateFound = domainInfo.getPredicates().find(p => p.name.toLowerCase() === symbolName);
+            let predicateFound = domainInfo.getPredicates().find(p => p.matchesShortNameCaseInsensitive(symbol.name));
             if (predicateFound) {
-                domainInfo.findVariableLocation(predicateFound);
                 return new VariableInfo(
                     this.createHover(symbol.range, 'Predicate', this.brackets(predicateFound.declaredName), predicateFound.getDocumentation()),
-                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(predicateFound.location)),
+                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(predicateFound.getLocation())),
                     predicateFound,
                 );
             }
-            let functionFound = domainInfo.getFunctions().find(f => f.name.toLowerCase() === symbolName);
+            let functionFound = domainInfo.getFunctions().find(f => f.matchesShortNameCaseInsensitive(symbol.name));
             if (functionFound) {
-                domainInfo.findVariableLocation(functionFound);
                 return new VariableInfo(
                     this.createHover(symbol.range, 'Function', this.brackets(functionFound.declaredName), functionFound.getDocumentation()),
-                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(functionFound.location)),
+                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(functionFound.getLocation())),
                     functionFound
                 );
             }
-            let derivedFound = domainInfo.getDerived().find(d => d.name.toLowerCase() === symbolName);
+            let derivedFound = domainInfo.getDerived().find(d => d.matchesShortNameCaseInsensitive(symbol.name));
             if (derivedFound) {
-                // todo: refresh the documentation string
                 return new VariableInfo(
                     this.createHover(symbol.range, 'Derived predicate/function', this.brackets(derivedFound.declaredName), derivedFound.getDocumentation()),
-                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(derivedFound.location)),
+                    new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(derivedFound.getLocation())),
                     derivedFound
                 );
             }
             let actionFound = domainInfo.getActions().find(a => a.name.toLowerCase() === symbolName);
             if (actionFound) {
-                let label = 'Action';
-                if (actionFound.isDurative) label = 'Durative ' + label;
                 return new ActionInfo(
-                    this.createHover(symbol.range, label, actionFound.name, actionFound.documentation || ''),
+                    this.createActionHover(symbol.range, actionFound),
                     new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(actionFound.location)),
                     actionFound
                 );
             }
         }
-        else if (symbol.isPrefixedBy('- ')) {
+        else if (symbol.isPrefixedBy('- ') || domainInfo.getTypes().includes(symbol.name)) {
 
             if (domainInfo.getTypes().includes(symbol.name)) {
-                let parents = domainInfo.typeInheritance.getVerticesWithEdgesFrom(symbol.name);
-                let inheritsFromText = parents.length > 0 ? "Inherits from: " + parents.join(', ') : ""
+                let parents = domainInfo.getTypeInheritance().getVerticesWithEdgesFrom(symbol.name);
+                let inheritsFromText = parents.length > 0 ? "Inherits from: " + parents.join(', ') : "";
                 return new TypeInfo(
-                    this.createHover(symbol.range, 'Type', symbol.name, inheritsFromText),
+                    this.createHover(symbol.range, 'Type', symbol.name, [inheritsFromText]),
                     new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(domainInfo.getTypeLocation(symbol.name))),
+                    symbol.name
+                );
+            }
+        }
+        else if (symbol.isPrefixedBy('?')) {
+            if (fileInfo.isDomain()) {
+                let parameterNode = domainInfo.syntaxTree.getNodeAt(document.offsetAt(symbol.range.start));
+
+                let scopeNode: PddlSyntaxNode = parameterNode.findParametrisableScope(symbol.name);
+                let indexOfParamDeclaration = scopeNode ?
+                    scopeNode.getText().indexOf('?' + symbol.name) :
+                    parameterNode.getStart();
+
+                return new ParameterInfo(
+                    this.createHover(symbol.range, 'Parameter', parameterNode.getToken().tokenText, []),
+                    new Location(document.uri, document.positionAt(indexOfParamDeclaration)),
+                    scopeNode,
                     symbol.name
                 );
             }
@@ -86,7 +101,7 @@ export class SymbolUtils {
     getWordAtDocumentPosition(document: TextDocument, position: Position): WordOnPositionContext {
         // find the word at the position leveraging the TextDocument facility
         let wordRange = document.getWordRangeAtPosition(position, /\w[-\w]*/);
-        if (!wordRange || wordRange.isEmpty || !wordRange.isSingleLine) return null;
+        if (!wordRange || wordRange.isEmpty || !wordRange.isSingleLine) { return null; }
 
         let word = document.getText(wordRange);
         let lineIdx = wordRange.start.line;
@@ -107,12 +122,12 @@ export class SymbolUtils {
 
         this.leadingSymbolPattern.lastIndex = 0;
         let match = this.leadingSymbolPattern.exec(leadingText); //todo: this pattern does not match, if the word was selected
-        if (!match) return null;
+        if (!match) { return null; }
         let leadingSymbolPart = match[1];
 
         this.followingSymbolPattern.lastIndex = 0;
         match = this.followingSymbolPattern.exec(followingText);
-        if (!match) return null;
+        if (!match) { return null; }
         let followingSymbolPart = match[1];
 
         let symbolName = leadingSymbolPart + followingSymbolPart.substr(1);
@@ -133,33 +148,48 @@ export class SymbolUtils {
     getSymbolAtPosition(document: TextDocument, position: Position): Symbol {
         let wordContext = this.getWordAtDocumentPosition(document, position);
 
-        // is the position not a word, or within comments? 
-        if (wordContext == null || wordContext.before.includes(';')) return null;
+        // is the position not a word, or within comments?
+        if (wordContext === null || wordContext === undefined || wordContext.before.includes(';')) { return null; }
 
         return new Symbol(wordContext.word, wordContext.range, wordContext.line);
     }
 
-    createHover(range: Range, title: string, symbolName: string, documentation: string) {
+    createHover(range: Range, title: string, symbolName: string, documentation: string[]) {
         let markdownString = this.createSymbolMarkdownDocumentation(title, symbolName, documentation);
         return new Hover(markdownString, range);
     }
 
-    createSymbolMarkdownDocumentation(title: string, symbolName: string, documentation: string) {
+    createSymbolMarkdownDocumentation(title: string, symbolName: string, documentation: string[]) {
         let markdownString = new MarkdownString(title ? `**${title}**` : undefined);
         markdownString.appendCodeblock(symbolName, 'pddl');
-        markdownString.appendText(`
-`);
-        markdownString.appendMarkdown(documentation);
+        documentation.forEach(d => markdownString.appendText(END_LINE + END_LINE).appendMarkdown(d));
         return markdownString;
     }
 
-    findSymbolReferences(fileUri: string, symbol: SymbolInfo, includeDeclaration: boolean): Location[] {
-        let fileInfo = this.workspace.getFileInfo(fileUri);
+    createActionHover(range: Range, action: Action): Hover {
+        let label = 'Action';
+        if (action.isDurative) { label = 'Durative ' + label; }
 
-        let domainInfo = this.workspace.asDomain(fileInfo);
-        if (!domainInfo) return null;
+        let doc = new MarkdownString(`**${label}**`)
+            .appendCodeblock(action.name, 'pddl');
 
-        let problemFiles = this.workspace.getProblemFiles(domainInfo);
+        if (action.parameters.length) {
+            doc = doc.appendMarkdown('Parameters:' + END_LINE + END_LINE);
+            action.parameters.forEach(p => doc.appendMarkdown('* `' + p.toPddlString() + '`' + END_LINE));
+        }
+
+        action.getDocumentation().forEach(d => doc.appendText(END_LINE + END_LINE).appendMarkdown(d));
+
+        return new Hover(doc, range);
+    }
+
+    findSymbolReferences(document: TextDocument, symbol: SymbolInfo, includeDeclaration: boolean): Location[] {
+        let fileInfo = this.workspace.getFileInfo(document);
+
+        let domainInfo = this.workspace.pddlWorkspace.asDomain(fileInfo);
+        if (!domainInfo) { return null; }
+
+        let problemFiles = this.workspace.pddlWorkspace.getProblemFiles(domainInfo);
 
         let locations: Location[] = [];
         let includeReference = includeDeclaration;
@@ -167,7 +197,7 @@ export class SymbolUtils {
             // add variable references found in the domain file
             domainInfo.getVariableReferences((<VariableInfo>symbol).variable).forEach(range => {
                 if (includeReference) {
-                    locations.push(new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(range)))
+                    locations.push(new Location(this.toUri(domainInfo.fileUri), SymbolUtils.toRange(range)));
                 } else {
                     // we skipped the declaration, but let's include any further references
                     includeReference = true;
@@ -189,27 +219,41 @@ export class SymbolUtils {
                 if (!vsRange.isEqual(symbol.location.range)) {
                     locations.push(new Location(this.toUri(domainInfo.fileUri), vsRange));
                 }
-            })
+            });
 
             // add type references found in all problem files
             problemFiles.forEach(p =>
                 p.getTypeReferences(typeName)
                     .forEach(range => locations.push(new Location(this.toUri(p.fileUri), SymbolUtils.toRange(range))))
             );
+        } else if (symbol instanceof ParameterInfo) {
+            let parameterInfo = <ParameterInfo>symbol;
+
+            parameterInfo.scopeNode.getChildrenRecursively(
+                node => node.isType(PddlTokenType.Parameter) && node.getToken().tokenText === '?' + symbol.name,
+                node => locations.push(new Location(document.uri, SymbolUtils.nodeToRange(document, node)))
+            );
+
+            if (!includeDeclaration) {
+                locations = locations.slice(1);
+            }
         }
 
         return locations;
     }
 
-    assertFileParsed(document: TextDocument): void {
-        let fileUri = document.uri.toString();
-        if (!this.workspace.getFileInfo(fileUri)) {
-            this.workspace.upsertAndParseFile(fileUri, toLanguageFromId(document.languageId), document.version, document.getText());
+    async assertFileParsed(document: TextDocument): Promise<void> {
+        if (!this.workspace.getFileInfo(document)) {
+            await this.workspace.upsertAndParseFile(document);
         }
     }
 
     static toRange(pddlRange: PddlRange): Range {
         return new Range(pddlRange.startLine, pddlRange.startCharacter, pddlRange.endLine, pddlRange.endCharacter);
+    }
+
+    static nodeToRange(document: TextDocument, node: PddlSyntaxNode): Range {
+        return new Range(document.positionAt(node.getStart()), document.positionAt(node.getEnd()));
     }
 
     static toLocation(document: TextDocument, pddlRange: PddlRange): Location {
@@ -236,7 +280,12 @@ export class Symbol {
 }
 
 export class SymbolInfo {
-    constructor(public hover: Hover, public location: Location) { }
+    /**
+     * Creates symbol information.
+     * @param hover hover info
+     * @param location location of the symbol's declaration
+     */
+    constructor(public readonly hover: Hover, public readonly location: Location) { }
 }
 
 export class VariableInfo extends SymbolInfo {
@@ -257,6 +306,13 @@ export class ActionInfo extends SymbolInfo {
     }
 }
 
+export class ParameterInfo extends SymbolInfo {
+    constructor(public hover: Hover, public location: Location,
+        public readonly scopeNode: PddlSyntaxNode, public readonly name: string) {
+        super(hover, location);
+    }
+}
+
 interface WordOnPositionContext {
     before: string;
     word: string;
@@ -264,3 +320,6 @@ interface WordOnPositionContext {
     line: string;
     range: Range;
 }
+
+const END_LINE = `
+`;

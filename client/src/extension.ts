@@ -4,24 +4,22 @@
  * ------------------------------------------------------------------------------------------ */
 'use strict';
 
-import { workspace, window, ExtensionContext, commands, Uri, ViewColumn, Range, languages } from 'vscode';
+import { workspace, window, ExtensionContext, commands, languages } from 'vscode';
 
-import { Planning } from './planning/planning'
-import { PddlWorkspace } from '../../common/src/workspace-model';
-import { DomainInfo, PDDL, PLAN, HAPPENINGS } from '../../common/src/parser';
-import { PddlRange } from '../../common/src/FileInfo';
+import { Planning } from './planning/planning';
+import { PddlWorkspace } from '../../common/src/PddlWorkspace';
+import { PDDL, PLAN, HAPPENINGS } from '../../common/src/parser';
 import { PddlConfiguration } from './configuration';
 import { Authentication } from '../../common/src/Authentication';
 import { AutoCompletion } from './completion/AutoCompletion';
-import { SymbolRenameProvider } from './SymbolRenameProvider';
-import { SymbolInfoProvider } from './SymbolInfoProvider';
+import { SymbolRenameProvider } from './symbols/SymbolRenameProvider';
+import { SymbolInfoProvider } from './symbols/SymbolInfoProvider';
 import { Diagnostics } from './diagnostics/Diagnostics';
-import { StartUp } from './init/StartUp'
+import { StartUp } from './init/StartUp';
 import { PTestExplorer } from './ptest/PTestExplorer';
 import { PlanValidator } from './diagnostics/PlanValidator';
 import { Debugging } from './debugger/debugging';
 import { ExtensionInfo } from './ExtensionInfo';
-import { toLanguage, isAnyPddl, createPddlExtensionContext } from './utils';
 import { HappeningsValidator } from './diagnostics/HappeningsValidator';
 import { PlanComparer } from './comparison/PlanComparer';
 import { Catalog } from './catalog/Catalog';
@@ -29,6 +27,14 @@ import { Catalog } from './catalog/Catalog';
 import { initialize, instrumentOperation } from "vscode-extension-telemetry-wrapper";
 import { KEY } from './TelemetryInstrumentation';
 import { SearchDebugger } from './searchDebugger/SearchDebugger';
+import { PlanningDomainsSessions } from './session/PlanningDomainsSessions';
+import { PddlFormatProvider } from './formatting/PddlFormatProvider';
+import { Val } from './validation/Val';
+import { createPddlExtensionContext } from './utils';
+import { AssociationProvider } from './workspace/AssociationProvider';
+import { SuggestionProvider } from './symbols/SuggestionProvider';
+import { CodePddlWorkspace } from './workspace/CodePddlWorkspace';
+import { DomainDiagnostics } from './diagnostics/DomainDiagnostics';
 
 const PDDL_CONFIGURE_PARSER = 'pddl.configureParser';
 const PDDL_LOGIN_PARSER_SERVICE = 'pddl.loginParserService';
@@ -38,6 +44,7 @@ const PDDL_LOGIN_PLANNER_SERVICE = 'pddl.loginPlannerService';
 const PDDL_UPDATE_TOKENS_PLANNER_SERVICE = 'pddl.updateTokensPlannerService';
 
 const PDDL_CONFIGURE_VALIDATOR = 'pddl.configureValidate';
+var formattingProvider: PddlFormatProvider;
 
 export async function activate(context: ExtensionContext) {
 
@@ -46,32 +53,38 @@ export async function activate(context: ExtensionContext) {
 	// initialize the instrumentation wrapper
 	await initialize(extensionInfo.getId(), extensionInfo.getVersion(), KEY);
 
-	// activate the extension, but send instrumentation data
-	await instrumentOperation("activation", activateWithTelemetry)(context);
+	try {
+		// activate the extension, but send instrumentation data
+		await instrumentOperation("activation", activateWithTelemetry)(context);
+	}
+	catch (ex) {
+		// sadly, the next line never gets triggered, even if the activateWithTelemetry fails
+		window.showErrorMessage("There was an error starting the PDDL extension: " + ex.message);
+	}
 }
 
 function activateWithTelemetry(_operationId: string, context: ExtensionContext) {
 	let pddlConfiguration = new PddlConfiguration(context);
 
+	let val = new Val(context);
+
 	// run start-up actions
-	new StartUp(context, pddlConfiguration).atStartUp();
+	new StartUp(context, pddlConfiguration, val).atStartUp();
 
 	let pddlContext = createPddlExtensionContext(context);
 
 	let pddlWorkspace = new PddlWorkspace(pddlConfiguration.getEpsilonTimeStep(), pddlContext);
-	let planning = new Planning(pddlWorkspace, pddlConfiguration, context);
-	let planValidator = new PlanValidator(planning.output, pddlWorkspace, pddlConfiguration, context);
-	let happeningsValidator = new HappeningsValidator(planning.output, pddlWorkspace, pddlConfiguration, context);
-
-	let revealActionCommand = commands.registerCommand('pddl.revealAction', (domainFileUri: Uri, actionName: String) => {
-		revealAction(<DomainInfo>pddlWorkspace.getFileInfo(domainFileUri.toString()), actionName);
-	});
+	let codePddlWorkspace = new CodePddlWorkspace(pddlWorkspace, pddlConfiguration, context);
+	let planning = new Planning(codePddlWorkspace, pddlConfiguration, context);
+	let planValidator = new PlanValidator(planning.output, codePddlWorkspace, pddlConfiguration, context);
+	let happeningsValidator = new HappeningsValidator(planning.output, codePddlWorkspace, pddlConfiguration, context);
 
 	let configureParserCommand = commands.registerCommand(PDDL_CONFIGURE_PARSER, () => {
 		pddlConfiguration.askNewParserPath();
 	});
 
-	new SearchDebugger(context, pddlConfiguration);
+	let searchDebugger = new SearchDebugger(context);
+	planning.addOptionsProvider(searchDebugger);
 
 	let loginParserServiceCommand = commands.registerCommand(PDDL_LOGIN_PARSER_SERVICE, () => {
 		let scopePromise = pddlConfiguration.askConfigurationScope();
@@ -137,19 +150,31 @@ function activateWithTelemetry(_operationId: string, context: ExtensionContext) 
 		pddlConfiguration.askNewValidatorPath();
 	}));
 
-	let completionItemProvider = languages.registerCompletionItemProvider(PDDL, new AutoCompletion(pddlWorkspace), '(', ':', '-');
+	let completionItemProvider = languages.registerCompletionItemProvider(PDDL, new AutoCompletion(codePddlWorkspace), '(', ':', '-');
 
-	let renameProvider = languages.registerRenameProvider(PDDL, new SymbolRenameProvider(pddlWorkspace));
+	let suggestionProvider = languages.registerCodeActionsProvider(PDDL, new SuggestionProvider(codePddlWorkspace), {
+		providedCodeActionKinds: SuggestionProvider.providedCodeActionKinds
+	});
 
-	let symbolInfoProvider = new SymbolInfoProvider(pddlWorkspace);
+	registerDocumentFormattingProvider(context);
+
+	let renameProvider = languages.registerRenameProvider(PDDL, new SymbolRenameProvider(codePddlWorkspace));
+
+	let symbolInfoProvider = new SymbolInfoProvider(codePddlWorkspace);
 
 	let documentSymbolProvider = languages.registerDocumentSymbolProvider(PDDL, symbolInfoProvider);
 	let definitionProvider = languages.registerDefinitionProvider(PDDL, symbolInfoProvider);
 	let referencesProvider = languages.registerReferenceProvider(PDDL, symbolInfoProvider);
 	let hoverProvider = languages.registerHoverProvider(PDDL, symbolInfoProvider);
 	let diagnosticCollection = languages.createDiagnosticCollection(PDDL);
-	let diagnostics = new Diagnostics(pddlWorkspace, diagnosticCollection,  pddlConfiguration,
+	let diagnostics = new Diagnostics(codePddlWorkspace, diagnosticCollection, pddlConfiguration,
 		planValidator, happeningsValidator);
+
+	// tslint:disable-next-line:no-unused-expression
+	new DomainDiagnostics(codePddlWorkspace);
+
+	// tslint:disable-next-line: no-unused-expression
+	new AssociationProvider(context, codePddlWorkspace);
 
 	let planDefinitionProvider = languages.registerDefinitionProvider(PLAN, symbolInfoProvider);
 	let planHoverProvider = languages.registerHoverProvider(PLAN, symbolInfoProvider);
@@ -157,22 +182,33 @@ function activateWithTelemetry(_operationId: string, context: ExtensionContext) 
 	let happeningsDefinitionProvider = languages.registerDefinitionProvider(HAPPENINGS, symbolInfoProvider);
 	let happeningsHoverProvider = languages.registerHoverProvider(HAPPENINGS, symbolInfoProvider);
 
-	new PTestExplorer(pddlContext, planning);
+	// tslint:disable-next-line:no-unused-expression
+	new PTestExplorer(pddlContext, codePddlWorkspace, planning);
 
+	// tslint:disable-next-line:no-unused-expression
 	new Catalog(context);
 
-	new Debugging(context, pddlWorkspace, pddlConfiguration);
+	// tslint:disable-next-line:no-unused-expression
+	new PlanningDomainsSessions(context);
+
+	// tslint:disable-next-line:no-unused-expression
+	new Debugging(context, codePddlWorkspace, pddlConfiguration);
 
 	context.subscriptions.push(new PlanComparer(pddlWorkspace, pddlConfiguration));
 
-	subscribeToWorkspace(pddlWorkspace, pddlConfiguration, context);
+	workspace.onDidChangeConfiguration(_ => {
+		if (registerDocumentFormattingProvider(context)) {
+			window.showInformationMessage("PDDL formatter is now available. Right-click on a PDDL file...");
+			console.log('PDDL Formatter enabled.');
+		}
+	});
 
-	// Push the disposables to the context's subscriptions so that the 
+	// Push the disposables to the context's subscriptions so that the
 	// client can be deactivated on extension deactivation
-	context.subscriptions.push(diagnostics, revealActionCommand,
+	context.subscriptions.push(diagnostics,
 		configureParserCommand, loginParserServiceCommand, updateTokensParserServiceCommand,
 		configurePlannerCommand, loginPlannerServiceCommand, updateTokensPlannerServiceCommand, completionItemProvider,
-		renameProvider, documentSymbolProvider, definitionProvider, referencesProvider, hoverProvider,
+		renameProvider, suggestionProvider, documentSymbolProvider, definitionProvider, referencesProvider, hoverProvider,
 		planHoverProvider, planDefinitionProvider, happeningsHoverProvider, happeningsDefinitionProvider);
 }
 
@@ -188,43 +224,14 @@ function createAuthentication(pddlConfiguration: PddlConfiguration): Authenticat
 		configuration.refreshToken, configuration.accessToken, configuration.sToken);
 }
 
-async function revealAction(domainInfo: DomainInfo, actionName: String) {
-	let document = await workspace.openTextDocument(Uri.parse(domainInfo.fileUri));
-	let actionFound = domainInfo.actions.find(a => a.name.toLowerCase() == actionName.toLowerCase());
-	let actionRange = actionFound ? toRange(actionFound.location) : null;
-	window.showTextDocument(document.uri, { viewColumn: ViewColumn.One, preserveFocus: true, preview: true, selection: actionRange });
-}
-
-function toRange(pddlRange: PddlRange): Range {
-	return new Range(pddlRange.startLine, pddlRange.startCharacter, pddlRange.endLine, pddlRange.endCharacter);
-}
-
-function subscribeToWorkspace(pddlWorkspace: PddlWorkspace, pddlConfiguration: PddlConfiguration, context: ExtensionContext): void {
-	// add all open documents
-	workspace.textDocuments
-		.filter(textDoc => isAnyPddl(textDoc))
-		.forEach(textDoc => {
-			pddlWorkspace.upsertFile(textDoc.uri.toString(), toLanguage(textDoc), textDoc.version, textDoc.getText());
-		});
-
-	// subscribe to document opening event
-	context.subscriptions.push(workspace.onDidOpenTextDocument(textDoc => { 
-		if (isAnyPddl(textDoc)) 
-			pddlWorkspace.upsertFile(textDoc.uri.toString(), toLanguage(textDoc), textDoc.version, textDoc.getText()) 
-		}
-	));
-
-	// subscribe to document changing event
-	context.subscriptions.push(workspace.onDidChangeTextDocument(docEvent => {
-		if (isAnyPddl(docEvent.document)) 
-			pddlWorkspace.upsertFile(docEvent.document.uri.toString(), toLanguage(docEvent.document), docEvent.document.version, docEvent.document.getText())
-		}
-	));
-
-	// subscribe to document closing event
-	context.subscriptions.push(workspace.onDidCloseTextDocument(textDoc => { 
-		if (isAnyPddl(textDoc)) pddlWorkspace.removeFile(textDoc.uri.toString()) 
-	}));
-
-	workspace.onDidChangeConfiguration(_ => pddlWorkspace.epsilon = pddlConfiguration.getEpsilonTimeStep());
+function registerDocumentFormattingProvider(context: ExtensionContext): boolean {
+	if (workspace.getConfiguration("pddl").get<boolean>("formatter") && !formattingProvider) {
+		formattingProvider = new PddlFormatProvider();
+		let formattingProviderDisposable = languages.registerDocumentFormattingEditProvider(PDDL, formattingProvider);
+		context.subscriptions.push(formattingProviderDisposable);
+		return true;
+	}	
+	else {
+		return false;
+	}
 }

@@ -12,20 +12,22 @@ import { PddlConfiguration } from '../configuration';
 
 import {diff} from 'semver';
 import { OverviewPage, SHOULD_SHOW_OVERVIEW_PAGE } from './OverviewPage';
-import { readFile } from '../utils';
+import * as afs from '../../../common/src/asyncfs';
+import { Val } from '../validation/Val';
+import { ValDownloadReminder } from '../validation/ValDownloadReminder';
 
 enum TipResponse { Ok, Later, Next }
 
 const LATER = 'LATER';
-const NEVER = 'NEVER'
+const NEVER = 'NEVER';
 const ACCEPTED = 'ACCEPTED';
 
 export class StartUp {
 
     overviewPage: OverviewPage;
 
-    constructor(private context: ExtensionContext, private pddlConfiguration: PddlConfiguration) {
-        this.overviewPage = new OverviewPage(context, this.pddlConfiguration);
+    constructor(private context: ExtensionContext, private pddlConfiguration: PddlConfiguration, private val: Val) {
+        this.overviewPage = new OverviewPage(context, this.pddlConfiguration, this.val);
     }
 
     atStartUp(): void {
@@ -34,7 +36,8 @@ export class StartUp {
         this.showTips();
         this.suggestFolderIsOpen();
         this.suggestAutoSave();
-        this.uninstallLegacyExtension(this.pddlConfiguration);
+
+        new ValDownloadReminder(this.context, this.val).suggestValDownloadConfigurationIfAbsent();
     }
 
     NEXT_TIP_TO_SHOW = 'nextTipToShow';
@@ -44,7 +47,7 @@ export class StartUp {
 
     async showTips(): Promise<boolean> {
         var tipsPath = this.context.asAbsolutePath('tips.txt');
-        var tips: string[] = (await readFile(tipsPath, 'utf-8')).split("\n");
+        var tips: string[] = (await afs.readFile(tipsPath, 'utf-8')).split("\n");
 
         var nextTipToShow = this.context.globalState.get(this.NEXT_TIP_TO_SHOW, 0);
 
@@ -53,7 +56,7 @@ export class StartUp {
             const tip = tips[index];
 
             // skip tips that were removed subsequently as obsolete
-            if (tip.trim() == "") {
+            if (tip.trim() === "") {
                 nextTipToShow++;
                 continue;
             }
@@ -73,7 +76,7 @@ export class StartUp {
             }
         }
 
-        if (nextTipToShow == tips.length) {
+        if (nextTipToShow === tips.length) {
             this.askForReview();
         }
 
@@ -103,7 +106,7 @@ export class StartUp {
     }
 
     async suggestAutoSave(): Promise<void> {
-        if (this.context.globalState.get(this.NEVER_AUTO_SAVE, false)) return;
+        if (this.context.globalState.get(this.NEVER_AUTO_SAVE, false)) { return; }
 
         let option = "files.autoSave";
         if (workspace.getConfiguration().get(option) === "off") {
@@ -145,7 +148,7 @@ export class StartUp {
             }
             else {
                 let changeLog = this.context.asAbsolutePath('CHANGELOG.html');
-                let html = readFile(changeLog, { encoding: "utf-8" });
+                let html = await afs.readFile(changeLog, { encoding: "utf-8" });
 
                 let webViewPanel = window.createWebviewPanel(
                     "pddl.WhatsNew",
@@ -173,7 +176,7 @@ export class StartUp {
         // what was the user response last time? 
         var accepted = this.context.globalState.get(this.ACCEPTED_TO_WRITE_A_REVIEW, LATER);
 
-        if (accepted == LATER) {
+        if (accepted === LATER) {
             let optionAccepted: MessageItem = { title: "OK, let's give feedback" };
             let optionLater: MessageItem = { title: "Remind me later" };
             let optionNever: MessageItem = { title: "Never" };
@@ -203,15 +206,6 @@ export class StartUp {
         var shouldShow = this.context.globalState.get<boolean>(SHOULD_SHOW_OVERVIEW_PAGE, true);
         if (shouldShow) {
             this.overviewPage.showWelcomePage(false);
-        }
-    }
-
-    uninstallLegacyExtension(pddlConfiguration: PddlConfiguration): void {
-        let extension = extensions.getExtension("jan-dolejsi.pddl-parser");
-
-        if (extension) {
-            pddlConfiguration.copyFromLegacyParserConfig()
-            window.showWarningMessage(`The internal preview extension 'PDDL SL8 Only' is now obsolete. Please uninstall it, or it will interfere with functionality of the PDDL extension.`);
         }
     }
 }

@@ -64,7 +64,7 @@ export class Test {
                     preProcessor = new PythonPreProcessor(context.pythonPath(), preProcessSettings[PRE_PROCESSOR_SCRIPT], preProcessSettings[PRE_PROCESSOR_ARGS]);
                     break;
                 case "nunjucks":
-                    preProcessor = new NunjucksPreProcessor(preProcessSettings[PRE_PROCESSOR_DATA], undefined, false);
+                    preProcessor = new NunjucksPreProcessor(preProcessSettings[PRE_PROCESSOR_DATA], undefined, 0, false);
                     break;
                 case "jinja2":
                     preProcessor = new Jinja2PreProcessor(context.pythonPath(), context.extensionPath, preProcessSettings[PRE_PROCESSOR_DATA]);
@@ -76,16 +76,16 @@ export class Test {
     }
 
     toJSON(): any {
-        let json: any = {}
+        let json: any = {};
 
-        if (this.label) json[LABEL] = this.label;
-        if (this.description) json[DESCRIPTION] = this.description;
-        if (this.domain) json[DOMAIN] = this.domain;
-        if (this.problem) json[PROBLEM] = this.problem;
-        if (this.options)  json[OPTIONS] = this.options;
-        if (this.expectedPlans.length) json[EXPECTED_PLANS] = this.expectedPlans;
+        if (this.label) { json[LABEL] = this.label; }
+        if (this.description) { json[DESCRIPTION] = this.description; }
+        if (this.domain) { json[DOMAIN] = this.domain; }
+        if (this.problem) { json[PROBLEM] = this.problem; }
+        if (this.options)  { json[OPTIONS] = this.options; }
+        if (this.expectedPlans.length) {json[EXPECTED_PLANS] = this.expectedPlans; }
 
-        if (this.preProcessor) json[PRE_PROCESSOR] = { kind: "unsupported"}; // creating test cases with pre-processing is currently not supported
+        if (this.preProcessor) { json[PRE_PROCESSOR] = { kind: "unsupported"}; } // creating test cases with pre-processing is currently not supported
 
         return json;
     }
@@ -150,7 +150,7 @@ export class Test {
 
     static fromUri(uri: Uri, context: PddlExtensionContext): Test {
         let testIndex = parseInt(uri.fragment);
-        if (testIndex != NaN) {
+        if (Number.isFinite(testIndex)) {
             let manifest = TestsManifest.load(uri.fsPath, context);
             return manifest.testCases[testIndex];
         }

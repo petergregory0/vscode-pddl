@@ -1,5 +1,346 @@
 # PDDL support - What's new?
 
+## [2.14.1] Fixes
+
+- added `:object-fluent` requirement to the syntax highlighter
+- support for plans in an XML format
+
+## [2.14.0] Parameter [F2] renaming and undeclared predicate/function auto-fix
+
+### Features
+
+* Renaming of action/process/event/forall/derived parameters. Click on a `?` parameter and press _F2_. ![Undeclared predicates/functions code action](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_parameter_type_renaming.gif)
+* Declaring undeclared predicates and functions: ![Undeclared predicates/functions code action](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_undeclared_predicate_function.gif)
+
+### Fixes
+
+* For PDDL files under version control, the _git_ repo version of the domain/problem files would appear as one of the real domain/problem files in the workspace, which was very confusing. They should no longer surface.
+
+## [2.13.1] Improved support for template-based problem generation
+
+### New Features
+
+* With a single click you can add all necessary files for a Nunjucks-based problem template generation.
+![Nunjucks sample](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_nunjucks_sample.gif)
+* For templated problem files a code action (bulb) can open the live preview of the generated problem file
+![Templated problem preview](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_templated_problem_preview.gif)
+* Early preview of domain-specific plan/state visualization via the new `planVisualizer` property in the `<<domain>>.planviz.json` config file.
+* Generated problem file previews are live updating when the data in .json file is modified!
+
+### Fixes
+
+* Previously the editor did not support invoking the planner on a template-generated problem file.
+* When authoring PDDL problem templates, errors are reported as diagnostic problem, and/or instead of the generated test. This is far less intrusive for the user experience.
+* Visualization of instantaneous actions in the plan - the bars are now fully filled, instead of looking like if they were ending in the relaxed plan.
+* The plan visualization was missing some numeric function plots, when the initial and final value of the function was the same.
+
+## [2.13.0] - VAL binaries available for MacOS
+
+### Features
+
+VAL binaries are now available for Mac OS as well as Linux and Windows. If you are a Mac user, download them using the `PDDL: Download VAL` command or when prompted.
+
+![One-click VAL download](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_update_VAL.gif)
+
+Added syntax highlighting for [PDDL+](https://planning.wiki/ref/pddlplus/domain) features such as the `:time` requirement and `process` or `event`.
+
+Added code actions corresponding to parser warning:
+
+* empty .pddl file suggests applying the domain/problem snippet.
+* missing PDDL requirement warning offers to add the requirement to `:requirement`
+
+Enriched action hover-over info. It now details action parameters and documentation comment.
+
+![Missing requirements and unused predicates/functions](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_missing_requirements_unused_predicates.gif)
+
+Predicate/function documentation comments are picked-up from both above and to-the-right location relative to the declaration.
+
+```pddl
+(:functions
+    ; some general comments
+
+    ; Accumulates cost
+    (cost) ; [$]
+)
+```
+
+Unused functions or predicates are rendered as faded.
+
+### Fixes
+
+Type/predicate/function renaming fixes
+
+* new name is validated before applying the bulk-rename
+* de-duplicating parser warnings/errors (VAL Parser repeats the missing requirement warning many times)
+* errors while downloading VAL binaries are now reported up to the user
+* previous VAL binaries are properly deleted after upgrade to the latest version
+
+### Engineering
+
+* file path and URI manipulations now delegated to the `vscode-uri` package and unit tests more robust for execution on MacOS
+* minimum version of VS Code is now 1.32
+* rewritten the PDDL domain/problem regex parsing by a PDDL tokenizer, which allows inspecting the syntax tree and implementing context-sensitive features correctly
+
+## [2.12.2] - 2019-07-08 - ICAPS 2019 Update
+
+### News
+
+This YouTube channel now shows how to use the PDDL extension to its full potential: [Hands-on PDDL Tutorial](https://youtu.be/XW0z8Oik6G8)
+
+### New features
+
+#### PDDL parser and plan validation tools auto-download
+
+The _PDDL Overview Page_ suggests to download the [VAL](https://github.com/KCL-Planning/VAL) tools that include the PDDL parser, plan validator and couple other derived utilities for plan evaluation. This democratises many of the features that were available in experimental mode for the last 12(!) months.\
+This YouTube video shows the download experience: [PDDL Tooling - Episode 1: Planning.Domains session](https://youtu.be/XW0z8Oik6G8)\
+This video shows the benefits of having the VAL tools: [PDDL Tooling - Episode 4: Working with plans](https://youtu.be/BFlCz49ETcA)
+
+#### PDDL domain/problem/plan file associations
+
+You can now enjoy the freedom of having your PDDL files spread across any directory structure.
+
+The VS Code PDDL extension had rigid convention for matching domain and problem files to each other. They had to be in the same folder and both open in the editor. Failing that, the editor was not able to naturally associate your files to each other. That would prevent you from invoking the planner, or validator seamlessly.
+
+If one of the rules above is not satisfied, the editor will not naturally associate your files to each other. In that case it shows a validation error suggesting to apply a _Quick Fix_ via the 💡 (bulb) symbol, which lets you find the corresponding domain/problem file from following scopes:
+
+1. suggested files, if multiple candidates were found
+1. currently open files in the editor
+1. other files in the workspace
+1. any other file selectable from the computer storage
+
+![domain/problem/plan associations](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_explicit_domain-problem-plan_associations.gif)
+
+#### PDDL Test Report
+
+PDDL Testing now shows results on a report page. This is far more readable than the summary in the `PDDL Test Output` window, which is now removed.
+I removed the `PDDL Test Output` channel to simplify UX.
+
+### Fixes
+
+- Ask for confirmation before discarding changes in session files.
+- PDDL Planner configuration can now be picked up from a workspace folder configuration.
+- Modal warning when sending PDDL to a new service
+- Cleaned-up tips
+- Planning.Domains interactions improvements ahead of the upcoming ICAPS tutorial.
+
+## [2.11.8] - 2019-07-05
+
+### Fixes
+
+- Activating the extension upon the `pddl.downloadVal` command.
+- Improved Valstep error reporting.
+- Instantaneous actions visualized correctly in object swim-lanes.
+- Valstep error repro export uses full valstep path rather than relying on valstep in the `%path%`. Thanks, Christian.
+
+### New Features
+
+- Added configuration for asynchronous planning services exposing a `/request` RESTful interface. Configuration may be retrieved from a `*.plannerConfiguration.json` or a `.json` file.
+- Tooltip on plan visualization plan selection bars now explain that the size of the bar correspond to the given plan metric value.
+
+## [2.11.7] - 2019-06-28
+
+### Preview of VAL tools download
+
+VAL binaries are now automatically downloadable.
+
+## [2.11.5] - 2019-06-24
+
+### PDDL Test execution for all tests in the workspace
+
+It is now possible to click on a folder in the PDDL Tests panel or even on the _Run all_ button in the toolbar and all tests nested within that folder, or in the workspace will be executed respectively.
+
+### Configuration alerts on Overview Page
+
+Overview Page shows non-intrusive alerts when the extension configuration is not optimal.
+
+![Overview Page shows alerts](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/OverviewPage.jpg)
+
+### Planning.Domains session
+
+#### Plugin configuration support
+
+Planning.Domains Editor Sessions use plug-ins that save their own configuration.
+The `solver` plugin's configuration (i.e. the URL of the solver service) is now replicated into the workspace folder's settings. This is stored in `.vscode/settings.json` file:
+
+```json
+{
+    "pddlPlanner.executableOrService": "http://localhost:8087/solve"
+}
+```
+
+When local session changes are committed back to the server, the solver URL is *not* included.
+
+#### Gamifying PDDL trainings
+
+Include a `.ptest.json` file into the template session, create classroom, open the Test Explorer (View > Open View ... > Test > PDDL TESTS) and click the _Run All_ button in the toolbar. This runs the test cases from all the student sessions and displays the pass/fail results.
+First student with passing tests wins ... a diploma :-!
+
+#### Allowing checkout when untracked local files exist
+
+Untracked local files are no longer preventing session update to latest server-side version. This means the user may deal with version conflicts by renaming files and merging using the VS Code Diff. Manually.
+
+#### Classroom: PDDL-Testing student sessions
+
+Planning.Domains classroom student sessions are no longer created in a sub-folder of the template session. If the template included a `.ptest.json` file with _unit_ test definitions, they may all now be executed using one click on the "Run all" button in the PDDL TEST panel toolbar. 
+
+### Clean-up
+
+Removed traces a legacy configuration from predecessor VS Code extension.
+
+## [2.11.4] - 2019-06-19
+
+### Fixes
+
+#### PDDL Overview Page
+
+- Hello World example command on the Overview Page now works even when no workspace folder was selected, and properly shows error messages when files with conflicting names are already present.
+- PDDL Sample git repo cloning is fixed (the command no longer accepts _Uri_, but string)
+
+## [2.11.3] - 2019-06-17
+
+### Planning.Domains classroom generation from a template session
+
+Planning.Domains session may be used as a template for an entire classroom bulk creation.
+
+The command _PDDL: Generate Planning.Domains classroom sessions from this template..._ automate the duplication of this session into any number of student sessions. A prompt pops up to submit student names and/or email addresses in a semi-colon separated list. If email address is included, the default email client pops up with a prepared message for each student.
+When all sessions are created, a dedicated VS Code workspace is created for the classroom and VS Code automatically opens it.
+
+![Planning.Domains classroom generation](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_classroom.gif)
+
+### Other improvements
+
+- Search Debugger: fit tree to available viewport with "F"
+- Planning.Domains session supports file renaming
+- ValStep errors reporting was enhanced to be able to send  the input data as a bug report
+
+### Codebase engineering work
+
+- more async I/O
+- tslint warnings addressed
+
+## [2.11.2] - 2019-05-28
+
+## New features
+
+### Search Debugger
+
+Following keyboard shortcuts are available to navigate or manipulate the search tree view:
+
+- Typing a number using <kbd>0</kbd>-<kbd>9</kbd> selects the state with the matching Order ID.
+- Change shape of a state to highlight states of interest using:
+  - <kbd>b</kbd>: box,
+  - <kbd>d</kbd>: diamond,
+  - <kbd>s</kbd>: star,
+  - <kbd>t</kbd>: triangle,
+  - <kbd>h</kbd>: hexagon,
+  - <kbd>q</kbd>: square,
+  - <kbd>e</kbd>: ellipse (default)
+- Toggle auto-fitting of the tree to the viewport using <kbd>f</kbd> to avoid losing focus, while search is progressing
+- <kbd>Shift</kbd>+<kbd>F</kbd> to fit search tree to viewport
+
+Dead-end states are visualized with brown color.
+Tree branches(s) leading to goal state(s) are painted in green color.
+
+The Search Debugger may now be configured (see the `pddlSearchDebugger.stateIdPattern` configuration setting) with a pattern to parse the state ID.
+The visualization then respects the IDs assigned by the planner rather than using its own numbering scheme
+(which is used if the received state ID does not respect the pattern).
+
+Both tree nodes and edges now show an informative tooltip when mouse hover-over.
+
+## Fixes
+
+Search Debugger may be re-used without resetting and the line plot will handle gracefully that states are added with assorted Order IDs. It maintains mapping between the state order ID and and its dataset row ID.
+The tree/chart was not responding to clicking on the Search Debugger helpful actions inside the Gantt chart. It was the case of actions occurring in the planhead more than once.
+
+## [2.11.1] - 2019-05-20
+
+## New features
+
+### Planning.Domains sessions
+
+The online [Planning.Domains](http://editor.planning.domains) editor has a concept of a session. _Session Details_ pane shows links to open the session online / offline. The _offline_ links are handled by VS Code, if installed.
+
+There are two ways to get started:
+
+1. Using a command:
+   - _PDDL: Download Planning.domains session_ and pasting the _Session Unique ID_
+1. By navigating to this URL in your favorite web browser:
+   - vscode://jan-dolejsi.pddl/planning.domains/session/_readOnlyHash_ or
+   - vscode://jan-dolejsi.pddl/planning.domains/session/edit/_readWriteHash_.
+
+The session files are downloaded into a selected workspace folder and may be interacted with via the _Source Control_ pane.
+
+![Planning.Domains Editor Session in VS Code](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_sessions_in_VSCode.gif)
+
+Session files may be deleted, renamed as well as added. The _Source Control_ pane shows the diff as usual. To open _Source Control_ select the `View > SCM` menu.
+
+The _Source Control_ pane has icons for:
+
+- uploading changes to Planning.Domains,
+- discarding local changes and
+- checking if a new version of the session is available.
+
+The [...] menu contains three more options:
+
+- Session may be duplicated (as a new writable session), which is useful when the session was open as read-only.
+- Session may be open in the default browser, or
+- shared via email, if default email client is installed to handle the `mailto:` protocol.
+
+Using the _duplicate session_ and _share via email_ commands, a teacher can create a session for everyone in the classroom and monitor progress of all students from VS Code.
+
+![Planning.Domains Sessions for classroom](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_classroom_in_VSCode.gif)
+
+The status bar of VS Code shows the state of the session. If multiple session folders are included in the VS Code workspace, the session of interest may be selected using the top part of the _Source Control_ pane.
+
+![Source control status](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/Planning.Domains_SCM_status.gif)
+
+This is what the different symbols in the status bar mean:
+
+1. cloud download icon - shows if a new version of the session is available for download
+1. repository icon - helps distinguishing Planning.Domain sessions from other types of source control e.g. Git
+1. pencil icon - is displayed if the session is in read/write mode
+1. time info - how long ago was the currently checked-out version saved to the server (clicking it opens up the list of versions to select)
+1. dot icon - is displayed if the session was modified locally
+1. two circular arrows icon - when clicked, VS Code checks whether a new version of the session(s) is available on the server.
+
+## [2.10.2] - 2019-05-17
+
+### Bug fixes
+
+- [Issue #23](https://github.com/jan-dolejsi/vscode-pddl/issues/23) Planner or parser that is configured as  `java -javaagent ...` are now not surrounded by double-quotes.
+
+### Changes
+
+Search debugger only listens to local http traffic via 127.0.0.1.
+Search debugger view shows the port number in the tooltip of the _signal_ icon.
+
+## [2.10.0] - 2019-05-11
+
+This version introduces the _ultimate_ AI Planning educational tool and a powerful search debugger tool at the same time. It explains how the heuristic function guides the search and at the same time it can be used to understand why the planner has hard time finding the plan for given planning problem and where does the domain model need to be tightened.
+
+Start the Search Debugger using the _PDDL: Start search debugger_ command. Stop it by the _PDDL: Stop search debugger_ or pressing the _cell phone signal_ icon. While the search debugger is active, it listens to the planner messages and visualizes the progress of the plan search in several ways:
+
+1. line plot of state heuristic value and estimate of makespan
+1. search tree
+1. best-state-so-far is visualized in terms of planhead, helpful actions and relaxed plan.
+
+![PDDL Search Visualization](https://raw.githubusercontent.com/wiki/jan-dolejsi/vscode-pddl/img/PDDL_search_debugger.gif)
+
+When the search stops, the states may be navigated and explored in three ways:
+
+1. using keyboard up, down, left, right buttons to navigate states in the search tree
+1. using keyboard shift+left and shift+right to navigate all states in order of discovery as layed out on the line plot
+1. by clicking on helpful actions to jump to the child state that expands that action (if actually created)
+
+While the Search Debugger is active, any planning _PDDL: Run the planner and display the plan_ requests are instrumented to send search progress info to the Search Debugger. This is achieved by appending a switch to the command line options. The switch may be configured using the `pddlSearchDebugger.plannerCommandLine` setting.
+
+The search debugger may be enabled/disabled by clicking on the bug-like icon in the status bar.
+For even smoother experience, the execution target setting may be switched to _Search debugger_ too to keep the Search debugger window in the forefront.
+
+If the planner outputs even more detailed log for every state, the log file could be synchronously navigated (scrolled to the same state). Select the log file that corresponds to the search being debugged by pressing the 🗎 icon. The log entry that corresponds to the state is matched using the regular expression pattern configurable by the  `pddlSearchDebugger.stateLogPattern` setting.
+
+To participate in this visual search debugging the planning engine must implement a HTTP client. An example of what data is expected may be found in the [mock search](https://github.com/jan-dolejsi/vscode-pddl/blob/master/client/src/searchDebugger/MockSearch.ts).
+
 ## [2.9.1] - 2019-04-09
 
 The extension activation is now postponed till a .pddl, .plan, .happenings file is open, not just present in the workspace. The extension is also activated when the Test pane or Planning.Domains file tree is open, as well as when several key commands are invoked by the user. This results in faster start-up of VS Code in the context of projects that have a mixture of code and PDDL models.
@@ -408,27 +749,21 @@ Simplified snippets and added tabstops/placeholders to them, so they are easy to
 
 ## Future work
 
-- Port custom html views to webview API
+- valstep batch mode
 - Review configuration properties scope - which properties should be moved to 'application' scope?
-- Validate new symbol name while renaming using `prepareRename`
-- Rename parameters and objects
+- Rename objects and constants
 - Auto-completion for constant/object names.
-- More general matching of domain file to problem file across workspace folder structure
-- Support for [Outline view](https://code.visualstudio.com/updates/v1_25#_outline-view), [Document Symbols](https://code.visualstudio.com/updates/v1_25#_document-symbols)
 - Any other extensions to put into extensions.json?
 - Review the ViewColumn usage following the Grid View feature availability in VS Code
-- Add a file system provider (readonly) for the IPC community and adapt it to the test cases manifests for ease of use
-- Add support for file stored in a session inside editor.planning.domains web interface
-- Add ['unused' warning](https://code.visualstudio.com/updates/v1_25#_diagnostictag)
+- Add a search into the virtual file system for the IPC benchmarks and adapt it to the test cases manifests for ease of use
+- Add Happenings to Problem explicit mapping
+- Interactive stepping through plans (aka debugging).
+- Icons: https://code.visualstudio.com/updates/v1_31#_updated-octicons
+- CodeAction to remove unnecessary requirements etc..
 
 ## [Unreleased]
 
-Interactive stepping through plans (aka debugging).
-Node.js update: https://code.visualstudio.com/updates/v1_31#_nodejs-update
-Icons: https://code.visualstudio.com/updates/v1_31#_updated-octicons
-Use vscode-uri package in the Common module.
-CodeAction to add/remove requirements, declare predicate/functions, etc..
-Gray out unused declarations.
+* more precise context sensitive auto completion
 
 ## Note to contributors
 
@@ -436,7 +771,21 @@ Note for open source contributors: all notable changes to the "pddl" extension w
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-[Unreleased]: https://github.com/jan-dolejsi/vscode-pddl/compare/v2.9.1...HEAD
+[Unreleased]: https://github.com/jan-dolejsi/vscode-pddl/compare/v2.14.1...HEAD
+[2.14.1]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.14.0...v2.14.1
+[2.14.0]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.13.1...v2.14.0
+[2.13.1]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.13.0...v2.13.1
+[2.13.0]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.12.2...v2.13.0
+[2.12.2]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.8...v2.12.2
+[2.11.8]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.7...v2.11.8
+[2.11.7]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.5...v2.11.7
+[2.11.5]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.4...v2.11.5
+[2.11.4]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.3...v2.11.4
+[2.11.3]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.2...v2.11.3
+[2.11.2]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.11.1...v2.11.2
+[2.11.1]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.10.2...v2.11.1
+[2.10.2]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.10.0...v2.10.2
+[2.10.0]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.9.1...v2.10.0
 [2.9.1]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.9.0...v2.9.1
 [2.9.0]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.8.2...v2.9.0
 [2.8.2]:https://github.com/jan-dolejsi/vscode-pddl/compare/v2.8.1...v2.8.2

@@ -1,4 +1,15 @@
-google.charts.load('current', { packages: ['corechart', 'line'] });
+// two maps help translating state IDs to chart data set rows and vice versa
+var stateIdToRowId = new Map();
+var rowIdToStateId = new Map();
+var chartDefined = false;
+
+try {
+    google.charts.load('current', { packages: ['corechart', 'line'] });
+    chartDefined = true;
+}
+catch(err) {
+    console.log(err);
+}
 
 // instead of this, we initialize the chart in the page body onLoad event
 // google.charts.setOnLoadCallback(initializeChart);
@@ -76,16 +87,30 @@ function reDrawChart() {
 }
 
 function selectChartRow(stateId) {
+    if (!chartDefined) return;
     if (stateId !== null) {
-        chart.setSelection([{row: stateId}]);
+        var rowId = stateIdToRowId.get(stateId);
+        chart.setSelection([{row: rowId}]);
     }
     else {
         chart.setSelection();
     }
 }
 
-function addStateToChart(newState) {
-    chartData.addRow([newState.id, newState.earliestTime, sanitizeNumber(newState.totalMakespan), sanitizeNumber(newState.h)]);
+function addStateToChart(newState, batch) {
+    if (chartData) {
+        var rowId = chartData.addRow([newState.id, newState.earliestTime, sanitizeNumber(newState.totalMakespan), sanitizeNumber(newState.h)]);
+        addRowId(rowId, newState.id);
+        if (!batch) reDrawChart();
+    }
+}
+
+function addRowId(rowId, stateId) {
+    rowIdToStateId.set(rowId, stateId);
+    stateIdToRowId.set(stateId, rowId);
+}
+
+function endChartBatch() {
     reDrawChart();
 }
 
@@ -98,18 +123,26 @@ const MAKESPAN_COLUMN = 2;
 const H_COLUMN = 3;
 
 function updateStateOnChart(state) {
-    chartData.setValue(state.id, MAKESPAN_COLUMN, sanitizeNumber(state.totalMakespan));
-    chartData.setValue(state.id, H_COLUMN, sanitizeNumber(state.h));
+    var rowId = stateIdToRowId.get(state.id);
+    chartData.setValue(rowId, MAKESPAN_COLUMN, sanitizeNumber(state.totalMakespan));
+    chartData.setValue(rowId, H_COLUMN, sanitizeNumber(state.h));
     reDrawChart();
 }
 
 function clearChart() {
     var rowsToRemove = chartData.getNumberOfRows();
     chartData.removeRows(0, rowsToRemove);
+    stateIdToRowId.clear();
+    rowIdToStateId.clear();
     reDrawChart();
     console.log("Removed " + rowsToRemove + " rows from the chart data table.");
 }
 
+/**
+ * Shifts the selected chart data-table row by number of items given by the 'offset'.
+ * @param {number} offset number of chart rows by which to move the selection
+ * @returns {number} new selected state id, or 'null' if nothing was selected originally
+ */
 function navigateChart(offset) {
     var selection = chart.getSelection();
     if (selection.length > 0) {
@@ -118,10 +151,10 @@ function navigateChart(offset) {
         var newSelectedRow = selectedRow + offset;
         if (newSelectedRow > -1 && newSelectedRow < chartData.getNumberOfRows()) {
             chart.setSelection([{row: newSelectedRow}]);
-            return newSelectedRow;
+            return rowIdToStateId.get(newSelectedRow);
         }
         else {
-            return selectedRow;
+            return rowIdToStateId.get(selectedRow);
         }
     }
     return null;

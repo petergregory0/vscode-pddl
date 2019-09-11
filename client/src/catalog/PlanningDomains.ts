@@ -3,12 +3,12 @@
  * Licensed under the MIT License. See License.txt in the project root for license information.
  * ------------------------------------------------------------------------------------------ */
 
-import * as request from 'request';
-
 import { CatalogEntry, Collection, Domain, Problem } from './CatalogEntry';
+import { getJson } from '../httpUtils';
 
 export class PlanningDomains {
 
+    public static readonly AUTHORITY = "api.planning.domains";
     public static readonly URL = "https://api.planning.domains/json/classical/";
 
     private parseCollection(collection_json: any): Collection {
@@ -22,7 +22,7 @@ export class PlanningDomains {
 
     async getCollections(): Promise<CatalogEntry[]> {
         let url = PlanningDomains.URL + "collections";
-        let json_output = await this.get(url);
+        let json_output = await getJsonResult(url);
         return json_output
             .map((collection_json: any) => this.parseCollection(collection_json));
     }
@@ -37,7 +37,7 @@ export class PlanningDomains {
 
     async getDomains(collection: Collection): Promise<CatalogEntry[]> {
         let url = PlanningDomains.URL + "domains/" + collection.id;
-        let json_output = await this.get(url);
+        let json_output = await getJsonResult(url);
         return json_output
             .map((domain_json: any) => this.parseDomain(domain_json))
             .sort(compareCatalogEntry);
@@ -54,35 +54,33 @@ export class PlanningDomains {
 
     async getProblems(domain: Domain): Promise<CatalogEntry[]> {
         let url = PlanningDomains.URL + "problems/" + domain.id;
-        let json_output = await this.get(url);
+        let json_output = await getJsonResult(url);
         return json_output
             .map((problem_json: any) => this.parseProblem(problem_json))
             .sort(compareCatalogEntry);
     }
 
-    get(url: string): Promise<any> {
-        return new Promise<any>((resolve, reject) => {
-            request.get(url, { json: true }, (error: any, httpResponse: request.Response, body: any) => {
-                if (error) {
-                    reject(error);
-                }
-                else {
-                    if (httpResponse && httpResponse.statusCode != 200) {
-                        reject("HTTP status code " + httpResponse.statusCode);
-                    }
-                    else {
-                        resolve(body["result"]);
-                    }
-                }
-            });
-        });
+}
+
+async function getJsonResult(url: string): Promise<any> {
+    let response = await getJson(url);
+    checkResponseForError(response);
+    return response["result"];
+}
+
+export function checkResponseForError(response: any) {
+    if (response["error"]) {
+        throw new Error(response["message"]);
     }
 }
 
 function compareCatalogEntry(a: CatalogEntry, b: CatalogEntry) {
-    if (a.label < b.label)
+    if (a.label < b.label) {
         return -1;
-    if (a.label > b.label)
+    } else if (a.label > b.label) {
         return 1;
-    return 0;
+    }
+    else {
+        return 0;
+    }
 }

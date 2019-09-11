@@ -9,14 +9,13 @@ import { WorkspaceFolder, DebugConfiguration, ProviderResult, CancellationToken,
 import { PlanDebugSession } from './PlanDebugSession';
 import * as Net from 'net';
 import { HAPPENINGS } from '../../../common/src/parser';
-import { FileInfo } from '../../../common/src/FileInfo';
 import { HappeningsInfo } from "../../../common/src/HappeningsInfo";
-import { PddlWorkspace } from '../../../common/src/workspace-model';
-import { toLanguage, isHappenings, getDomainAndProblemForHappenings, selectHappenings } from '../utils';
+import { isHappenings, getDomainAndProblemForHappenings, selectHappenings } from '../workspace/workspaceUtils';
 import { PddlConfiguration } from '../configuration';
 import { HappeningsExecutor } from './HappeningsExecutor';
 import { DebuggingSessionFiles } from './DebuggingSessionFiles';
 import { HappeningsToPlanResumeCasesConvertor } from './HappeningsToPlanResumeCasesConvertor';
+import { CodePddlWorkspace } from '../workspace/CodePddlWorkspace';
 
 /*
  * Set the following compile time flag to true if the
@@ -29,7 +28,7 @@ export class Debugging {
 
 	decorations = new Map<vscode.TextDocument, vscode.TextEditorDecorationType[]>();
 
-	constructor(context: vscode.ExtensionContext, private pddlWorkspace: PddlWorkspace, public plannerConfiguration: PddlConfiguration) {
+	constructor(context: vscode.ExtensionContext, private pddlWorkspace: CodePddlWorkspace, public plannerConfiguration: PddlConfiguration) {
 
 		context.subscriptions.push(vscode.commands.registerCommand('pddl.selectAndActivateHappenings', async(config) => {
 			config;
@@ -37,7 +36,7 @@ export class Debugging {
 		}));
 
 		// register a configuration provider for 'pddl-happenings' debug type
-		const provider = new PddlPlanDebugConfigurationProvider()
+		const provider = new PddlPlanDebugConfigurationProvider();
 		context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('pddl-happenings', provider));
 		context.subscriptions.push(provider);
 
@@ -53,7 +52,7 @@ export class Debugging {
 				this.saveDecorations(editor.document, decorations);
 			}
 			catch (ex) {
-				vscode.window.showErrorMessage(ex)
+				vscode.window.showErrorMessage(ex.message || ex);
 			}
 		}));
 
@@ -63,7 +62,7 @@ export class Debugging {
 				new HappeningsToPlanResumeCasesConvertor(context, this.plannerConfiguration).generate();
 			}
 			catch (ex) {
-				vscode.window.showErrorMessage(ex)
+				vscode.window.showErrorMessage(ex.message || ex);
 			}
 		}));
 
@@ -74,7 +73,7 @@ export class Debugging {
 
 	clearDecorations(document: vscode.TextDocument): void {
 		let decorations = this.decorations.get(document);
-		if (decorations) decorations.forEach(d => d.dispose());
+		if (decorations) { decorations.forEach(d => d.dispose()); }
 		this.decorations.set(document, []);
 	}
 
@@ -95,7 +94,7 @@ export class Debugging {
 			return null;
 		}
 
-		let activeFileInfo = this.upsertAndParseFile(window.activeTextEditor.document);
+		let activeFileInfo = await this.pddlWorkspace.upsertAndParseFile(window.activeTextEditor.document);
 
 		if (!(activeFileInfo instanceof HappeningsInfo)) {
 			window.showErrorMessage('Active document is not debuggable.');
@@ -104,19 +103,13 @@ export class Debugging {
 
 		let happeningsInfo = <HappeningsInfo>activeFileInfo;
 
-		let context = getDomainAndProblemForHappenings(happeningsInfo, this.pddlWorkspace);
+		let context = getDomainAndProblemForHappenings(happeningsInfo, this.pddlWorkspace.pddlWorkspace);
 
 		return {
 			domain: context.domain,
 			problem: context.problem,
 			happenings: happeningsInfo
 		};
-	}
-
-	upsertAndParseFile(textDocument: vscode.TextDocument): FileInfo {
-		return this.pddlWorkspace.upsertAndParseFile(textDocument.uri.toString(),
-			toLanguage(textDocument),
-			textDocument.version, textDocument.getText());
 	}
 
 	async startDebugging() {
@@ -156,7 +149,7 @@ class PddlPlanDebugConfigurationProvider implements vscode.DebugConfigurationPro
 				config.request = 'launch';
 				config.program = '${file}';
 				config.domain = 'domain.pddl';
-				config.problem = '${fileBasenameNoExtension}.pddl'
+				config.problem = '${fileBasenameNoExtension}.pddl';
 				config.stopOnEntry = true;
 			}
 		}

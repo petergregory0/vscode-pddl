@@ -20,11 +20,13 @@ export class MockSearch {
         let helloWorld = await new Promise<string>((resolve, reject) => {
             request.get(this.url + '/about', (error, httpResponse, httpBody) => {
                 if (error) {
-                    reject(error)
+                    reject(error);
+                    return;
                 }
                 else {
                     if (httpResponse && httpResponse.statusCode > 204) {
                         reject("HTTP status code " + httpResponse.statusCode);
+                        return;
                     }
                     else {
                         resolve(httpBody);
@@ -60,7 +62,7 @@ export class MockSearch {
                 break;
             case 'patch':
                 // this should really be a 'patch' verb, but the clients have more trouble making it work
-                return await this.post('/state/h', mockEvent.toWireMessage());
+                return await this.post('/state/heuristic', mockEvent.toWireMessage());
                 break;
             default:
                 console.log("Unsupported mock event: " + mockEvent.operation);
@@ -72,10 +74,12 @@ export class MockSearch {
             request.post(this.url + path, { json: content }, (error, httpResponse, _httpBody) => {
                 if (error) {
                     reject(error);
+                    return;
                 }
                 else {
                     if (httpResponse && httpResponse.statusCode > 204) {
                         reject('HTTP status code ' + httpResponse.statusCode);
+                        return;
                     }
                     else {
                         resolve(void 0);
@@ -174,7 +178,8 @@ class MockStateContextEvent extends MockEvent {
             parentId: this.stateContext.parentId,
             g: this.stateContext.g,
             earliestTime: this.stateContext.earliestTime,
-            planHead: this.stateContext.planHead
+            appliedAction: this.stateContext.appliedAction ? toWireSearchHappening(this.stateContext.appliedAction) : null,
+            planHead: this.stateContext.planHead.map(h => toWireSearchHappening(h))
         };
     }
 }
@@ -189,10 +194,26 @@ class MockStateSearchContextEvent extends MockEvent {
             id: this.stateSearchContext.stateContext.state.id,
             totalMakespan: this.stateSearchContext.totalMakespan,
             h: this.stateSearchContext.h,
-            helpfulActions: this.stateSearchContext.helpfulActions,
-            relaxedPlan: this.stateSearchContext.relaxedPlan
+            helpfulActions: this.stateSearchContext.helpfulActions.map(a => toWireHelpfulAction(a)),
+            relaxedPlan: this.stateSearchContext.relaxedPlan.map(h => toWireSearchHappening(h))
         };
     }
+}
+
+function toWireSearchHappening(happening: SearchHappening): any {
+    return {
+        earliestTime: happening.earliestTime,
+        actionName: happening.actionName,
+        shotCounter: happening.shotCounter,
+        kind: HappeningType[happening.kind]
+    };
+}
+
+function toWireHelpfulAction(action: HelpfulAction): any {
+    return {
+        actionName: action.actionName,
+        kind: HappeningType[action.kind]
+    };
 }
 
 class MockStateSearchContext {
@@ -206,28 +227,26 @@ class MockStateSearchContext {
 class MockStateContext {
 
     static createInitial(): MockStateContext {
-        return new MockStateContext(MockState.createInitial(), 0, EPSILON, [], null);
+        return new MockStateContext(MockState.createInitial(), 0, EPSILON, null, [], null);
     }
 
-    private _actionName: string;
-
     constructor(public readonly state: MockState, public readonly g: number, public readonly earliestTime: number,
+        public readonly appliedAction: MockSearchHappening,
         public readonly planHead: SearchHappening[], public readonly parentId?: string) {
-        this._actionName = !this.isInitialState() ?
-            this.getLastHappening().actionName :
-            null;
     }
 
     get actionName(): string {
-        return this._actionName;
+        return this.appliedAction ? this.appliedAction.actionName : null;
     }
 
     isInitialState(): boolean {
-        return this.planHead.length == 0;
+        return this.planHead.length === 0;
     }
 
     getLastHappening(): SearchHappening {
-        if (this.isInitialState()) throw new Error("Check if this is an initial state first..");
+        if (this.isInitialState()) {
+            throw new Error("Check if this is an initial state first..");
+        }
         return this.planHead[this.planHead.length - 1];
     }
 
@@ -242,8 +261,9 @@ class MockStateContext {
     apply(actionName: string, shotCounter: number, kind: HappeningType, timeIncrement: number): MockStateContext {
         let id = ++MockState.lastStateId;
         let earliestTime = this.earliestTime + timeIncrement;
-        let newPlanHead = this.planHead.concat([new MockSearchHappening(earliestTime, actionName, shotCounter, kind)]);
-        return new MockStateContext(new MockState(id.toString()), this.g + 1, earliestTime, newPlanHead, this.state.id);
+        let appliedAction = new MockSearchHappening(earliestTime, actionName, shotCounter, kind, false);
+        let newPlanHead = this.planHead.concat([appliedAction]);
+        return new MockStateContext(new MockState(id.toString()), this.g + 1, earliestTime, appliedAction, newPlanHead, this.state.id);
     }
 
     evaluate(h: number, helpfulActions: HelpfulAction[], relaxedPlanFactory: (stateContext: MockStateContext) => RelaxedPlanBuilder): MockStateSearchContext {
@@ -290,13 +310,13 @@ class RelaxedPlanBuilder {
 
     start(actionName: string): RelaxedPlanBuilder {
         let time = this.time += EPSILON;
-        this.happenings.push(new MockSearchHappening(time, actionName, 0, HappeningType.START));
+        this.happenings.push(new MockSearchHappening(time, actionName, 0, HappeningType.START, true));
         return this;
     }
 
     end(timeOffset: number, actionName: string): RelaxedPlanBuilder {
         let time = this.time += timeOffset;
-        this.happenings.push(new MockSearchHappening(time, actionName, 0, HappeningType.END));
+        this.happenings.push(new MockSearchHappening(time, actionName, 0, HappeningType.END, true));
         return this;
     }
 

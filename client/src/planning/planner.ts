@@ -4,17 +4,17 @@
  * ------------------------------------------------------------------------------------------ */
 'use strict';
 
-import { DomainInfo, ProblemInfo } from '../../../common/src/parser';
+import { ProblemInfo } from '../../../common/src/parser';
+import { DomainInfo } from '../../../common/src/DomainInfo';
 import { PlannerResponseHandler } from './PlannerResponseHandler';
 import { Plan } from '../../../common/src/Plan';
 import { PddlPlanParser } from '../../../common/src/PddlPlanParser';
 
 export abstract class Planner {
-    epsilon = 1e-3;
 
     planningProcessKilled: boolean;
 
-    constructor(public plannerPath: string, public plannerOptions: string) {
+    constructor(protected readonly plannerPath: string) {
 
     }
 

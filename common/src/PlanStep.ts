@@ -7,13 +7,27 @@
 import { Happening, HappeningType } from "./HappeningsInfo";
 
 export class PlanStep {
-    actionName: string;
-    objects: string[];
+    private actionName: string;
+    private objects: string[];
 
-    constructor(private time: number, public fullActionName: string, public isDurative: boolean, private duration: number, public lineIndex: number | undefined) {
+    constructor(private readonly time: number, public readonly fullActionName: string,
+        public readonly isDurative: boolean, private readonly duration: number,
+        public readonly lineIndex: number | undefined, public readonly commitment?: PlanStepCommitment) {
         let nameFragments = fullActionName.split(' ');
         this.actionName = nameFragments[0];
         this.objects = nameFragments.slice(1);
+    }
+
+    getActionName(): string {
+        return this.actionName;
+    }
+
+    getFullActionName(): string {
+        return this.fullActionName;
+    }
+
+    getObjects(): string[] {
+        return this.objects;
     }
 
     getStartTime(): number {
@@ -36,7 +50,7 @@ export class PlanStep {
         }
 
         return PlanStep.equalsWithin(this.time, other.time, epsilon)
-            && this.fullActionName.toLowerCase() == other.fullActionName.toLowerCase();
+            && this.fullActionName.toLowerCase() === other.fullActionName.toLowerCase();
     }
 
     static equalsWithin(a: number, b: number, epsilon: number): boolean {
@@ -45,9 +59,9 @@ export class PlanStep {
 
     toPddl(): string {
         let output = "";
-        if (this.time != null) output += `${this.time.toFixed(5)}: `;
+        if (this.time !== null && this.time !== undefined) { output += `${this.time.toFixed(5)}: `; }
         output += `(${this.fullActionName})`;
-        if (this.isDurative) output += ` [${this.duration.toFixed(5)}]`;
+        if (this.isDurative) { output += ` [${this.duration.toFixed(5)}]`; }
         return output;
     }
 
@@ -64,4 +78,10 @@ export class PlanStep {
             return [instant];
         }
     }
+}
+
+export enum PlanStepCommitment {
+    Committed = "COMMITTED",
+    EndsInRelaxedPlan = "ENDS_IN_RELAXED_PLAN",
+    StartsInRelaxedPlan = "STARTS_IN_RELAXED_PLAN"
 }

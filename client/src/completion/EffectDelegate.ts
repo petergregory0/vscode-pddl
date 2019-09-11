@@ -5,12 +5,10 @@
 'use strict';
 
 import { CompletionItem, MarkdownString, SnippetString } from 'vscode';
-import { PddlWorkspace } from '../../../common/src/workspace-model';
-import { DomainInfo } from '../../../common/src/parser';
-import { FileInfo, Variable } from '../../../common/src/FileInfo';
+import { PddlWorkspace } from '../../../common/src/PddlWorkspace';
+import { FileInfo } from '../../../common/src/FileInfo';
+import { PDDL } from '../../../common/src/parser';
 import { Delegate } from './Delegate';
-
-var PDDL = 'pddl';
 
 export class EffectDelegate extends Delegate {
 
@@ -20,9 +18,9 @@ export class EffectDelegate extends Delegate {
 
     getNumericEffectItems(fileInfo: FileInfo): CompletionItem[] {
         let domainInfo = this.workspace.asDomain(fileInfo);
-        if (!domainInfo) return [];
-        let functions = this.getFunctions(domainInfo);
-        if (!functions.length) return [];
+        if (!domainInfo) { return []; }
+        let functions = domainInfo.getFunctions();
+        if (!functions.length) { return []; }
         let namesCsv = Delegate.toTypeLessNamesCsv(functions);
 
         let discreteEffectHint = 'Use this either in instantaneous `:action`\'s `:effect`, or in `:durative-action`\'s `(at start ...)` or `(at end ...)` effect.';
@@ -81,11 +79,5 @@ export class EffectDelegate extends Delegate {
             continuousIncrease,
             continuousDecrease
         ];
-    }
-
-    private getFunctions(domainInfo: DomainInfo): Variable[] {
-        let functions = domainInfo.getFunctions();
-        functions.forEach(f => domainInfo.findVariableLocation(f));
-        return functions;
     }
 }
