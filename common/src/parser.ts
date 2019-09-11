@@ -4,6 +4,7 @@
 * ------------------------------------------------------------------------------------------ */
 'use strict';
 
+import { DomainParserPreProcessor } from "./DomainParserPreProcessor";
 import { ProblemParserPreProcessor } from "./ProblemParserPreProcessor";
 import { dirname } from "path";
 import { Util } from "./util";
@@ -22,11 +23,13 @@ export class Parser {
     problemPattern = /^\s*\(define\s*\(problem\s+(\S+)\s*\)\s*\(:domain\s+(\S+)\s*\)/gi;
     problemCompletePattern = /^\s*\(define\s*\(problem\s+(\S+)\s*\)\s*\(:domain\s+(\S+)\s*\)\s*(\(:requirements\s*([^\)]*)\))?\s*(\(:objects\s*([^\)]*)\))?\s*\(:init\s*([\s\S]*)\s*\)\s*\(:goal\s*([\s\S]*?)\s*\)\s*(\(:constraints\s*([\s\S]*?)\s*\))?\s*(\(:metric\s*([\s\S]*?)\s*\))?\s*\)\s*$/gi;
 
-    preProcessor: ProblemParserPreProcessor;
+    problemPreProcessor: ProblemParserPreProcessor;
+    domainPreProcessor:  DomainParserPreProcessor;
+
 
     constructor(context?: PddlExtensionContext) {
         if (context) {
-            this.preProcessor = new ProblemParserPreProcessor(context);
+            this.problemPreProcessor = new ProblemParserPreProcessor(context);
         }
     }
 
@@ -35,7 +38,7 @@ export class Parser {
         let workingDirectory = dirname(filePath);
 
         try {
-            if (this.preProcessor) fileText = this.preProcessor.process(fileText, workingDirectory);
+            if (this.problemPreProcessor) fileText = this.problemPreProcessor.process(fileText, workingDirectory);
         } catch (ex) {
             if (ex instanceof PreProcessingError) {
                 let problemInfo = new ProblemInfo(fileUri, fileVersion, "unknown", "unknown");
